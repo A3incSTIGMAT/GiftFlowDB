@@ -1,21 +1,54 @@
 import os
 import asyncio
+import hashlib
+import hmac
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiohttp import ClientSession
+from aiohttp import ClientSession, web
 from database import init_db, get_user, add_user, get_all_gifts, add_transaction, get_all_transactions
 from keep_alive import keep_alive
 
 # ==================== КОНФИГ ====================
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-CRYPTO_TOKEN = os.getenv('CRYPTO_TOKEN')
+LAVA_SHOP_ID = os.getenv('LAVA_SHOP_ID')
+LAVA_API_KEY = os.getenv('LAVA_API_KEY')
+LAVA_SECRET_KEY = os.getenv('LAVA_SECRET_KEY')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
 FEE_PERCENT = 0.10  # Твоя комиссия 10%
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# ==================== LAVA ФУНКЦИИ ====================
+async def create_lava_invoice(amount, order_id, description):
+    """Создаёт счёт в Lava.top"""
+    url = "https://api.lava.top/payment/create"
+    headers = {
+        "Authorization": f"Bearer {LAVA_API_KEY}",
+        "Content-Type": "application/json",
+        "Shop-Id": LAVA_SHOP_ID
+    }
+    data = {
+        "amount": str(amount),
+        "currency": "RUB",
+        "orderId": order_id,
+        "description": description,
+        "successUrl": f"https://t.me/{(await bot.get_me()).username}",
+        "failUrl": f"https://t.me/{(await bot.get_me()).username}",
+        "webhookUrl": "https://giftflowdb.onrender.com/webhook"
+    }
+    
+    async with ClientSession() as session:
+        async with session.post(url, headers=headers, json=data) as response:
+            return await response.json()
+
+def verify_lava_signature(data, signature):
+    """Проверяет подпись от Lava"""
+    sign_string = f"{data.get('orderId', '')}{data.get('amount', '')}{LAVA_SECRET_KEY}"
+    hash = hashlib.sha256(sign_string.encode()).hexdigest()
+    return hash == signature
 
 # ==================== КЛАВИАТУРЫ ====================
 async def get_gifts_keyboard():
@@ -59,7 +92,7 @@ async def cmd_start(message: types.Message):
     await message.answer(
         f"👋 <b>Привет, {message.from_user.first_name}!</b>\n\n"
         f"Выбери подарок ниже 👇\n\n"
-        f"💳 Оплата через Crypto Bot (карты/крипта)\n"
+        f"💳 Оплата через Lava (СБП/карты/крипта)\n"
         f"🔒 Безопасно и анонимно",
         parse_mode="HTML",
         reply_markup=await get_gifts_keyboard()
@@ -103,61 +136,88 @@ async def process_payment(callback: types.CallbackQuery):
         await callback.answer("❌ Подарок не найден", show_alert=True)
         return
 
-    # Создаем счет в Crypto Bot
-    url = "https://pay.crypt.bot/api/createInvoice"
-    headers = {"X-Crypto-Api-Key": CRYPTO_TOKEN}
-    data = {
-        "amount": str(int(gift['price'])),
-        "asset": "RUB",
-        "description": f"Подарок: {gift['name']}",
-        "paid_btn_name": "Вернуться в бота",
-        "paid_btn_url": f"https://t.me/{(await bot.get_me()).username}",
-        "payload": str(callback.from_user.id)
-    }
+    order_id = f"{callback.from_user.id}_{gift['id']}_{int(gift['price'])}"
     
-    try:
-        async with ClientSession() as session:
-            async with session.post(url, headers=headers, json=data) as response:
-                result = await response.json()
-                
-                if result.get('ok'):
-                    invoice_url = result['result']['invoice_url']
-                    invoice_id = result['result']['invoice_id']
-                    
-                    # Записываем транзакцию в БД
-                    fee = gift['price'] * FEE_PERCENT
-                    await add_transaction(callback.from_user.id, gift['name'], gift['price'], fee)
-                    
-                    await callback.message.answer(
-                        f"✅ <b>Счет создан!</b>\n\n"
-                        f"💰 Сумма: {int(gift['price'])}₽\n"
-                        f"🎁 Подарок: {gift['name']}\n\n"
-                        f"Оплати по кнопке ниже:",
-                        parse_mode="HTML",
-                        reply_markup=await get_payment_keyboard(invoice_url)
-                    )
-                    
-                    # Уведомляем админа
-                    await bot.send_message(
-                        ADMIN_ID,
-                        f"💰 <b>Новый счет!</b>\n\n"
-                        f"👤 Юзер: @{callback.from_user.username or 'без username'}\n"
-                        f"💵 Сумма: {int(gift['price'])}₽\n"
-                        f"🎁 Подарок: {gift['name']}\n"
-                        f"📋 ID инвойса: <code>{invoice_id}</code>\n\n"
-                        f"🔗 <a href='{invoice_url}'>Ссылка на оплату</a>",
-                        parse_mode="HTML"
-                    )
-                else:
-                    await callback.message.answer(
-                        "❌ Ошибка создания счета.\nПопробуй позже или напиши админу.",
-                        reply_markup=await get_back_keyboard()
-                    )
-    except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+    result = await create_lava_invoice(
+        amount=gift['price'],
+        order_id=order_id,
+        description=f"Подарок: {gift['name']}"
+    )
+    
+    print(f"Lava API Response: {result}")
+    
+    if result.get('success') or result.get('url') or result.get('paymentUrl'):
+        invoice_url = result.get('url', result.get('paymentUrl', result.get('data', {}).get('url', '')))
+        
+        if invoice_url:
+            fee = gift['price'] * FEE_PERCENT
+            await add_transaction(callback.from_user.id, gift['name'], gift['price'], fee)
+            
+            await callback.message.answer(
+                f"✅ <b>Счет создан!</b>\n\n"
+                f"💰 Сумма: {int(gift['price'])}₽\n"
+                f"🎁 Подарок: {gift['name']}\n\n"
+                f"Оплати по кнопке ниже:",
+                parse_mode="HTML",
+                reply_markup=await get_payment_keyboard(invoice_url)
+            )
+            
+            await bot.send_message(
+                ADMIN_ID,
+                f"💰 <b>Новый счет Lava!</b>\n\n"
+                f"👤 Юзер: @{callback.from_user.username or 'без username'}\n"
+                f"💵 Сумма: {int(gift['price'])}₽\n"
+                f"🎁 Подарок: {gift['name']}\n"
+                f"🔗 <a href='{invoice_url}'>Ссылка на оплату</a>",
+                parse_mode="HTML"
+            )
+        else:
+            await callback.message.answer(
+                "❌ Ошибка: не удалось получить ссылку на оплату.\nПопробуй позже или напиши админу.",
+                reply_markup=await get_back_keyboard()
+            )
+    else:
+        error_msg = result.get('message', result.get('error', 'Неизвестная ошибка'))
+        await callback.message.answer(
+            f"❌ Ошибка создания счета: {error_msg}\nПопробуй позже или напиши админу.",
+            reply_markup=await get_back_keyboard()
+        )
     
     await callback.answer()
 
+# ==================== WEBHOOK ДЛЯ LAVA ====================
+async def lava_webhook_handler(request):
+    """Обработчик уведомлений от Lava"""
+    try:
+        data = await request.json()
+        signature = request.headers.get('X-Signature', '')
+        
+        print(f"Lava Webhook: {data}")
+        
+        if not verify_lava_signature(data, signature):
+            print("Invalid signature")
+            return web.json_response({'status': 'error'}, status=400)
+        
+        if data.get('status') == 'paid' or data.get('success') == True:
+            order_id = data.get('orderId', data.get('order_id', ''))
+            amount = float(data.get('amount', 0))
+            user_id = int(order_id.split('_')[0]) if '_' in order_id else 0
+            
+            await bot.send_message(
+                ADMIN_ID,
+                f"✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>\n\n"
+                f"👤 User ID: {user_id}\n"
+                f"💵 Сумма: {int(amount)}₽\n"
+                f"🎉 Пора вручать подарок!",
+                parse_mode="HTML"
+            )
+        
+        return web.json_response({'status': 'success'})
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return web.json_response({'status': 'error'}, status=500)
+
+# ==================== АДМИН-КОМАНДЫ ====================
 @dp.message(Command("stats"))
 async def cmd_stats(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -195,7 +255,7 @@ async def main():
     print("🔄 Инициализация базы данных...")
     await init_db()
     
-    print("🔔 Запуск веб-сервера для UptimeRobot...")
+    print("🔔 Запуск веб-сервера для Lava Webhook + UptimeRobot...")
     keep_alive()
     
     print("🚀 Бот запущен! Работаю 24/7!")
@@ -203,4 +263,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
 
