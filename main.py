@@ -30,14 +30,23 @@ async def get_gifts_keyboard():
     return builder.as_markup()
 
 async def get_payment_keyboard(invoice_url):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить счет", url=invoice_url)]
-    ])
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 Оплатить счет", url=invoice_url)
+    builder.adjust(1)
+    return builder.as_markup()
+
+async def get_gift_detail_keyboard(gift_id):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 Оплатить", callback_data=f"pay_{gift_id}")
+    builder.button(text="⬅️ Назад к подаркам", callback_data="back_to_gifts")
+    builder.adjust(2)
+    return builder.as_markup()
 
 async def get_back_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад к подаркам", callback_data="back_to_gifts")]
-    ])
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ Назад к подаркам", callback_data="back_to_gifts")
+    builder.adjust(1)
+    return builder.as_markup()
 
 # ==================== ХЕНДЛЕРЫ ====================
 
@@ -72,9 +81,7 @@ async def process_gift_select(callback: types.CallbackQuery):
         f"📝 <b>Описание:</b>\n{gift['description']}\n\n"
         f"Нажми кнопку для оплаты:",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", callback_data=f"pay_{gift_id}")]
-        ]) + await get_back_keyboard()
+        reply_markup=await get_gift_detail_keyboard(gift_id)
     )
     await callback.answer()
 
@@ -196,5 +203,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
