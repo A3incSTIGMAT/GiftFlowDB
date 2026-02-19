@@ -5,7 +5,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "GiftFlow Bot is Alive!"
+    return "🚀 GiftFlow Bot is Alive and Running!"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
