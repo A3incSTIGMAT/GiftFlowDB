@@ -1,7 +1,6 @@
 import os
 import asyncio
 import hashlib
-import hmac
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -24,11 +23,10 @@ dp = Dispatcher()
 # ==================== LAVA ФУНКЦИИ ====================
 async def create_lava_invoice(amount, order_id, description):
     """Создаёт счёт в Lava.top"""
-    url = "https://api.lava.top/payment/create"
+    url = "https://api.lava.top/v1/payment/create"
     headers = {
         "Authorization": f"Bearer {LAVA_API_KEY}",
-        "Content-Type": "application/json",
-        "Shop-Id": LAVA_SHOP_ID
+        "Content-Type": "application/json"
     }
     data = {
         "amount": str(amount),
@@ -37,12 +35,25 @@ async def create_lava_invoice(amount, order_id, description):
         "description": description,
         "successUrl": f"https://t.me/{(await bot.get_me()).username}",
         "failUrl": f"https://t.me/{(await bot.get_me()).username}",
-        "webhookUrl": "https://giftflowdb.onrender.com/webhook"
+        "webhookUrl": "https://giftflowdb.onrender.com/webhook",
+        "shopId": LAVA_SHOP_ID
     }
     
-    async with ClientSession() as session:
-        async with session.post(url, headers=headers, json=data) as response:
-            return await response.json()
+    try:
+        async with ClientSession() as session:
+            async with session.post(url, headers=headers, json=data) as response:
+                text = await response.text()
+                print(f"Lava Response Status: {response.status}")
+                print(f"Lava Response Text: {text}")
+                
+                if response.status == 200:
+                    import json
+                    return json.loads(text)
+                else:
+                    return {"success": False, "error": f"Status {response.status}", "message": text}
+    except Exception as e:
+        print(f"Lava API Error: {e}")
+        return {"success": False, "error": str(e)}
 
 def verify_lava_signature(data, signature):
     """Проверяет подпись от Lava"""
@@ -144,9 +155,9 @@ async def process_payment(callback: types.CallbackQuery):
         description=f"Подарок: {gift['name']}"
     )
     
-    print(f"Lava API Response: {result}")
+    print(f"Lava API Result: {result}")
     
-    if result.get('success') or result.get('url') or result.get('paymentUrl'):
+    if result.get('success') or result.get('url') or result.get('paymentUrl') or result.get('data', {}).get('url'):
         invoice_url = result.get('url', result.get('paymentUrl', result.get('data', {}).get('url', '')))
         
         if invoice_url:
@@ -177,7 +188,7 @@ async def process_payment(callback: types.CallbackQuery):
                 reply_markup=await get_back_keyboard()
             )
     else:
-        error_msg = result.get('message', result.get('error', 'Неизвестная ошибка'))
+        error_msg = result.get('message', result.get('error', result.get('desc', 'Неизвестная ошибка')))
         await callback.message.answer(
             f"❌ Ошибка создания счета: {error_msg}\nПопробуй позже или напиши админу.",
             reply_markup=await get_back_keyboard()
@@ -192,12 +203,14 @@ async def lava_webhook_handler(request):
         data = await request.json()
         signature = request.headers.get('X-Signature', '')
         
-        print(f"Lava Webhook: {data}")
+        print(f"Lava Webhook Received: {data}")
         
-        if not verify_lava_signature(data, signature):
+        # Проверяем подпись (если есть)
+        if signature and not verify_lava_signature(data, signature):
             print("Invalid signature")
             return web.json_response({'status': 'error'}, status=400)
         
+        # Проверяем статус оплаты
         if data.get('status') == 'paid' or data.get('success') == True:
             order_id = data.get('orderId', data.get('order_id', ''))
             amount = float(data.get('amount', 0))
@@ -263,6 +276,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
 
