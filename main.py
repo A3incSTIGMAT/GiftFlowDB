@@ -9,7 +9,9 @@ from keep_alive import keep_alive
 
 # ==================== КОНФИГ ====================
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_ID = 7076299389  # Твой ID админа
+SUPER_ADMIN_ID = 895844198  # Полный доступ
+SUPPORT_ADMIN_ID = 7076299389  # Связь с клиентами и оплаты
+ADMIN_IDS = [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]
 FEE_PERCENT = 0.10
 
 # ТВОИ РЕКВИЗИТЫ
@@ -40,6 +42,20 @@ PAYMENT_DETAILS = """
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# ==================== ПРОВЕРКА ПРАВ ====================
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
+
+def is_super_admin(user_id):
+    return user_id == SUPER_ADMIN_ID
+
+def get_admin_role(user_id):
+    if user_id == SUPER_ADMIN_ID:
+        return "super_admin"
+    elif user_id == SUPPORT_ADMIN_ID:
+        return "support_admin"
+    return "user"
 
 # ==================== КЛАВИАТУРЫ ====================
 async def get_gifts_keyboard():
@@ -73,6 +89,34 @@ async def get_back_keyboard():
     builder.adjust(1)
     return builder.as_markup()
 
+async def get_super_admin_keyboard():
+    """Полная админ-панель для супер-админа"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📊 Статистика", callback_data="admin_stats")
+    builder.button(text="👥 Пользователи", callback_data="admin_users")
+    builder.button(text="📦 Заказы", callback_data="admin_orders")
+    builder.button(text="📢 Рассылка", callback_data="admin_broadcast")
+    builder.button(text="⚙️ Настройки", callback_data="admin_settings")
+    builder.button(text="🔧 Помощь", callback_data="admin_help")
+    builder.adjust(2)
+    return builder.as_markup()
+
+async def get_support_admin_keyboard():
+    """Ограниченная панель для менеджера"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📦 Заказы", callback_data="admin_orders")
+    builder.button(text="💬 Сообщения", callback_data="admin_messages")
+    builder.button(text="📊 Моя статистика", callback_data="admin_support_stats")
+    builder.adjust(2)
+    return builder.as_markup()
+
+async def get_admin_keyboard(user_id):
+    """Выбор клавиатуры в зависимости от роли"""
+    if is_super_admin(user_id):
+        return await get_super_admin_keyboard()
+    else:
+        return await get_support_admin_keyboard()
+
 # ==================== ХЕНДЛЕРЫ ====================
 
 @dp.message(Command("start"))
@@ -81,15 +125,161 @@ async def cmd_start(message: types.Message):
     if not user:
         await add_user(message.from_user.id, message.from_user.username)
     
+    # Если админ — показываем админ-панель
+    if is_admin(message.from_user.id):
+        role = get_admin_role(message.from_user.id)
+        role_name = "СУПЕР-АДМИН" if role == "super_admin" else "МЕНЕДЖЕР"
+        
+        await message.answer(
+            f"👋 <b>Привет, {role_name}!</b>\n\n"
+            f"Выбери действие:",
+            parse_mode="HTML",
+            reply_markup=await get_admin_keyboard(message.from_user.id)
+        )
+    else:
+        await message.answer(
+            f"👋 <b>Привет, {message.from_user.first_name}!</b>\n\n"
+            f"Выбери подарок ниже 👇\n\n"
+            f"💳 Оплата вручную (СБП/карта/крипта)\n"
+            f"📱 После оплаты отправь скриншот в бот\n"
+            f"⏱️ Вручаю подарки в течение 24 часов",
+            parse_mode="HTML",
+            reply_markup=await get_gifts_keyboard()
+        )
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Доступ запрещён")
+        return
+    
     await message.answer(
-        f"👋 <b>Привет, {message.from_user.first_name}!</b>\n\n"
-        f"Выбери подарок ниже 👇\n\n"
-        f"💳 Оплата вручную (СБП/карта/крипта)\n"
-        f"📱 После оплаты отправь скриншот в бот\n"
-        f"⏱️ Вручаю подарки в течение 24 часов",
+        f"⚙️ <b>Админ-панель</b>\n\n"
+        f"Твоя роль: {get_admin_role(message.from_user.id)}\n"
+        f"Выбери действие:",
         parse_mode="HTML",
-        reply_markup=await get_gifts_keyboard()
+        reply_markup=await get_admin_keyboard(message.from_user.id)
     )
+
+@dp.callback_query(F.data.startswith("admin_"))
+async def admin_panel(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещён", show_alert=True)
+        return
+    
+    action = callback.data.split("_")[1]
+    
+    # === ДОСТУПНО ВСЕМ АДМИНАМ ===
+    if action == "orders":
+        transactions = await get_all_transactions()
+        if not transactions:
+            await callback.message.answer("📦 Заказов ещё нет")
+            return
+        
+        recent = transactions[-10:][::-1]
+        text = "📦 <b>Последние заказы:</b>\n\n"
+        for t in recent:
+            text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{t.get('username', 'нет')}\n"
+        
+        await callback.message.answer(text, parse_mode="HTML")
+    
+    # === ТОЛЬКО СУПЕР-АДМИН ===
+    elif action == "stats":
+        if not is_super_admin(callback.from_user.id):
+            await callback.answer("❌ Только супер-админ", show_alert=True)
+            return
+        
+        transactions = await get_all_transactions()
+        total_income = sum(t['amount'] for t in transactions)
+        total_fee = sum(t['fee'] for t in transactions)
+        
+        await callback.message.answer(
+            f"📊 <b>Полная статистика бота</b>\n\n"
+            f"📦 Всего заказов: {len(transactions)}\n"
+            f"💵 Общий оборот: {int(total_income)}₽\n"
+            f"💰 Твоя прибыль (10%): {int(total_fee)}₽\n"
+            f"✅ Успешных: {len(transactions)}",
+            parse_mode="HTML"
+        )
+    
+    elif action == "users":
+        if not is_super_admin(callback.from_user.id):
+            await callback.answer("❌ Только супер-админ", show_alert=True)
+            return
+        
+        await callback.message.answer(
+            f"👥 <b>Пользователи</b>\n\n"
+            f"Функция в разработке.\n"
+            f"Данные хранятся в базе данных Neon.",
+            parse_mode="HTML"
+        )
+    
+    elif action == "broadcast":
+        if not is_super_admin(callback.from_user.id):
+            await callback.answer("❌ Только супер-админ", show_alert=True)
+            return
+        
+        await callback.message.answer(
+            f"📢 <b>Рассылка</b>\n\n"
+            f"Отправь сообщение, которое нужно разослать всем пользователям.\n"
+            f"Или отмени командой /cancel",
+            parse_mode="HTML"
+        )
+    
+    elif action == "settings":
+        if not is_super_admin(callback.from_user.id):
+            await callback.answer("❌ Только супер-админ", show_alert=True)
+            return
+        
+        await callback.message.answer(
+            f"⚙️ <b>Настройки</b>\n\n"
+            f"Здесь можно изменить:\n"
+            f"• Реквизиты для оплаты\n"
+            f"• Комиссию\n"
+            f"• Список подарков\n\n"
+            f"Изменения вносятся через код на GitHub.",
+            parse_mode="HTML"
+        )
+    
+    elif action == "help":
+        if not is_super_admin(callback.from_user.id):
+            await callback.answer("❌ Только супер-админ", show_alert=True)
+            return
+        
+        await callback.message.answer(
+            f"🔧 <b>Помощь супер-админу</b>\n\n"
+            f"📊 /stats - Полная статистика\n"
+            f"👥 /users - Список пользователей\n"
+            f"📦 /orders - Заказы\n"
+            f"📢 /broadcast - Рассылка\n"
+            f"⚙️ /settings - Настройки\n"
+            f"❓ /help - Эта справка",
+            parse_mode="HTML"
+        )
+    
+    # === ТОЛЬКО МЕНЕДЖЕР ===
+    elif action == "messages":
+        if not is_super_admin(callback.from_user.id) and callback.from_user.id == SUPPORT_ADMIN_ID:
+            await callback.message.answer(
+                f"💬 <b>Сообщения от клиентов</b>\n\n"
+                f"Все сообщения пересылаются тебе автоматически.\n"
+                f"Проверяй личные сообщения от бота.",
+                parse_mode="HTML"
+            )
+    
+    elif action == "support_stats":
+        transactions = await get_all_transactions()
+        total_income = sum(t['amount'] for t in transactions)
+        
+        await callback.message.answer(
+            f"📊 <b>Твоя статистика (Менеджер)</b>\n\n"
+            f"📦 Всего заказов: {len(transactions)}\n"
+            f"💵 Общий оборот: {int(total_income)}₽\n"
+            f"✅ Обработано: {len(transactions)}",
+            parse_mode="HTML"
+        )
+    
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("gift_"))
 async def process_gift_select(callback: types.CallbackQuery):
@@ -113,10 +303,19 @@ async def process_gift_select(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "back_to_gifts")
 async def back_to_gifts(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "👋 Выбери подарок ниже 👇",
-        reply_markup=await get_gifts_keyboard()
-    )
+    if is_admin(callback.from_user.id):
+        await callback.message.edit_text(
+            f"⚙️ <b>Админ-панель</b>\n\n"
+            f"Твоя роль: {get_admin_role(callback.from_user.id)}\n"
+            f"Выбери действие:",
+            parse_mode="HTML",
+            reply_markup=await get_admin_keyboard(callback.from_user.id)
+        )
+    else:
+        await callback.message.edit_text(
+            "👋 Выбери подарок ниже 👇",
+            reply_markup=await get_gifts_keyboard()
+        )
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("pay_"))
@@ -129,7 +328,6 @@ async def process_payment(callback: types.CallbackQuery):
         await callback.answer("❌ Подарок не найден", show_alert=True)
         return
 
-    # Записываем транзакцию в БД
     fee = gift['price'] * FEE_PERCENT
     await add_transaction(callback.from_user.id, gift['name'], gift['price'], fee)
     
@@ -143,22 +341,23 @@ async def process_payment(callback: types.CallbackQuery):
         f"2️⃣ Сделай скриншот успешного перевода\n"
         f"3️⃣ Отправь скриншот в этот чат\n"
         f"4️⃣ Я проверю и вручу подарок в течение 24 часов\n\n"
-        f"📞 <b>Есть вопросы?</b> Пиши админу: @{(await bot.get_me()).username}",
+        f"📞 <b>Есть вопросы?</b> Пиши админу!",
         parse_mode="HTML",
         reply_markup=await get_payment_keyboard()
     )
     
-    # Уведомляем админа
-    await bot.send_message(
-        ADMIN_ID,
-        f"💰 <b>Новый заказ!</b>\n\n"
-        f"👤 Юзер: @{callback.from_user.username or 'без username'}\n"
-        f"🆔 ID: {callback.from_user.id}\n"
-        f"💵 Сумма: {int(gift['price'])}₽\n"
-        f"🎁 Подарок: {gift['name']}\n"
-        f"📱 Ждём скриншот оплаты",
-        parse_mode="HTML"
-    )
+    # Уведомляем ОБАИХ админов
+    for admin_id in ADMIN_IDS:
+        await bot.send_message(
+            admin_id,
+            f"💰 <b>Новый заказ!</b>\n\n"
+            f"👤 Юзер: @{callback.from_user.username or 'без username'}\n"
+            f"🆔 ID: {callback.from_user.id}\n"
+            f"💵 Сумма: {int(gift['price'])}₽\n"
+            f"🎁 Подарок: {gift['name']}\n"
+            f"📱 Ждём скриншот оплаты",
+            parse_mode="HTML"
+        )
     
     await callback.answer()
 
@@ -174,7 +373,6 @@ async def show_requisites(callback: types.CallbackQuery):
 # ==================== ОБРАБОТКА СКРИНШОТОВ ====================
 @dp.message(F.photo)
 async def handle_screenshot(message: types.Message):
-    # Пересылаем скриншот админу
     await message.forward(ADMIN_ID)
     
     await message.answer(
@@ -185,42 +383,52 @@ async def handle_screenshot(message: types.Message):
         parse_mode="HTML"
     )
     
-    await bot.send_message(
-        ADMIN_ID,
-        f"📸 <b>Новый скриншот оплаты!</b>\n\n"
-        f"👤 От: @{message.from_user.username or 'без username'}\n"
-        f"🆔 ID: {message.from_user.id}\n"
-        f"💳 Проверь поступление средств и вручи подарок!",
-        parse_mode="HTML"
-    )
+    # Пересылаем обоим админам
+    for admin_id in ADMIN_IDS:
+        await bot.send_message(
+            admin_id,
+            f"📸 <b>Новый скриншот оплаты!</b>\n\n"
+            f"👤 От: @{message.from_user.username or 'без username'}\n"
+            f"🆔 ID: {message.from_user.id}\n"
+            f"💳 Проверь поступление средств и вручи подарок!",
+            parse_mode="HTML"
+        )
 
 # ==================== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ====================
 @dp.message()
 async def handle_text(message: types.Message):
-    # Пересылаем все текстовые сообщения админу (для связи)
-    if message.text:
-        await message.forward(ADMIN_ID)
-        
-        await message.answer(
-            f"✅ <b>Сообщение отправлено админу!</b>\n\n"
-            f"Я отвечу тебе в ближайшее время.",
-            parse_mode="HTML"
-        )
-        
-        await bot.send_message(
-            ADMIN_ID,
-            f"💬 <b>Новое сообщение от пользователя!</b>\n\n"
-            f"👤 От: @{message.from_user.username or 'без username'}\n"
-            f"🆔 ID: {message.from_user.id}\n"
-            f"📝 Текст: {message.text}",
-            parse_mode="HTML"
-        )
+    # Игнорируем команды
+    if message.text.startswith('/'):
+        return
+    
+    # Пересылаем менеджеру (7076299389)
+    await message.forward(SUPPORT_ADMIN_ID)
+    
+    await message.answer(
+        f"✅ <b>Сообщение отправлено менеджеру!</b>\n\n"
+        f"Я отвечу тебе в ближайшее время.",
+        parse_mode="HTML"
+    )
+    
+    # Уведомляем супер-админа
+    await bot.send_message(
+        SUPER_ADMIN_ID,
+        f"💬 <b>Новое сообщение от пользователя!</b>\n\n"
+        f"👤 От: @{message.from_user.username or 'без username'}\n"
+        f"🆔 ID: {message.from_user.id}\n"
+        f"📝 Текст: {message.text}",
+        parse_mode="HTML"
+    )
 
 # ==================== АДМИН-КОМАНДЫ ====================
 @dp.message(Command("stats"))
 async def cmd_stats(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         await message.answer("❌ Доступ запрещён")
+        return
+    
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Только супер-админ")
         return
     
     transactions = await get_all_transactions()
@@ -228,23 +436,123 @@ async def cmd_stats(message: types.Message):
     total_fee = sum(t['fee'] for t in transactions)
     
     await message.answer(
-        f"📊 <b>Статистика бота</b>\n\n"
+        f"📊 <b>Полная статистика бота</b>\n\n"
         f"📦 Всего заказов: {len(transactions)}\n"
         f"💵 Общий оборот: {int(total_income)}₽\n"
-        f"💰 Твоя прибыль (10%): {int(total_fee)}₽",
+        f"💰 Твоя прибыль (10%): {int(total_fee)}₽\n"
+        f"✅ Успешных: {len(transactions)}",
         parse_mode="HTML"
     )
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
+    if is_super_admin(message.from_user.id):
+        await message.answer(
+            f"📚 <b>Помощь (Супер-админ)</b>\n\n"
+            f"🎁 <b>/start</b> - Админ-панель\n"
+            f"⚙️ <b>/admin</b> - Админ-панель\n"
+            f"📊 <b>/stats</b> - Полная статистика\n"
+            f"👥 <b>/users</b> - Список пользователей\n"
+            f"📦 <b>/orders</b> - Список заказов\n"
+            f"📢 <b>/broadcast</b> - Рассылка всем\n"
+            f"⚙️ <b>/settings</b> - Настройки\n"
+            f"❓ <b>/help</b> - Эта справка",
+            parse_mode="HTML"
+        )
+    elif is_admin(message.from_user.id):
+        await message.answer(
+            f"📚 <b>Помощь (Менеджер)</b>\n\n"
+            f"🎁 <b>/start</b> - Админ-панель\n"
+            f"⚙️ <b>/admin</b> - Админ-панель\n"
+            f"📦 <b>/orders</b> - Список заказов\n"
+            f"💬 <b>/messages</b> - Сообщения клиентов\n"
+            f"❓ <b>/help</b> - Эта справка",
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            f"📚 <b>Помощь</b>\n\n"
+            f"🎁 <b>/start</b> - Главное меню с подарками\n"
+            f"❓ <b>/help</b> - Эта справка\n\n"
+            f"💡 Если возникли вопросы — пиши админу!",
+            parse_mode="HTML"
+        )
+
+@dp.message(Command("users"))
+async def cmd_users(message: types.Message):
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Только супер-админ")
+        return
+    
     await message.answer(
-        f"📚 <b>Помощь</b>\n\n"
-        f"🎁 <b>/start</b> - Главное меню с подарками\n"
-        f"📊 <b>/stats</b> - Статистика (только админ)\n"
-        f"❓ <b>/help</b> - Эта справка\n\n"
-        f"💡 Если возникли вопросы — пиши админу!",
+        f"👥 <b>Пользователи</b>\n\n"
+        f"Функция в разработке.\n"
+        f"Данные хранятся в базе данных Neon.",
         parse_mode="HTML"
     )
+
+@dp.message(Command("orders"))
+async def cmd_orders(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Доступ запрещён")
+        return
+    
+    transactions = await get_all_transactions()
+    if not transactions:
+        await message.answer("📦 Заказов ещё нет")
+        return
+    
+    recent = transactions[-10:][::-1]
+    text = "📦 <b>Последние 10 заказов:</b>\n\n"
+    for t in recent:
+        text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{t.get('username', 'нет')}\n"
+    
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: types.Message):
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Только супер-админ")
+        return
+    
+    await message.answer(
+        f"📢 <b>Рассылка</b>\n\n"
+        f"Отправь сообщение, которое нужно разослать всем пользователям.\n"
+        f"Или отмени командой /cancel",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: types.Message):
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Только супер-админ")
+        return
+    
+    await message.answer(
+        f"⚙️ <b>Настройки</b>\n\n"
+        f"Изменения вносятся через код на GitHub:\n"
+        f"• Реквизиты для оплаты\n"
+        f"• Комиссия\n"
+        f"• Список подарков",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("messages"))
+async def cmd_messages(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Доступ запрещён")
+        return
+    
+    await message.answer(
+        f"💬 <b>Сообщения от клиентов</b>\n\n"
+        f"Все сообщения пересылаются автоматически.\n"
+        f"Проверяй личные сообщения от бота.",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("cancel"))
+async def cmd_cancel(message: types.Message):
+    await message.answer("❌ Отменено")
 
 # ==================== ЗАПУСК ====================
 async def main():
@@ -255,10 +563,15 @@ async def main():
     keep_alive()
     
     print("🚀 Бот запущен! Работаю 24/7!")
+    print(f"👑 Супер-админ: {SUPER_ADMIN_ID}")
+    print(f"👤 Менеджер: {SUPPORT_ADMIN_ID}")
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
 
 
 
