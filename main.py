@@ -9,10 +9,18 @@ from keep_alive import keep_alive
 
 # ==================== КОНФИГ ====================
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-SUPER_ADMIN_ID = 895844198  # Полный доступ
-SUPPORT_ADMIN_ID = 7076299389  # Связь с клиентами и оплаты
+SUPER_ADMIN_ID = 895844198  # Полный доступ (Я)
+SUPPORT_ADMIN_ID = 7076299389  # Связь с клиентами и оплаты (Лана)
 ADMIN_IDS = [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]
-FEE_PERCENT = 0.10
+
+# РАСПРЕДЕЛЕНИЕ ПРИБЫЛИ (от комиссии 10%)
+FEE_PERCENT = 0.10  # Комиссия 10% от суммы
+PROFIT_SPLIT = {
+    'lana': 0.47,        # 47% Лана
+    'admin': 0.28,       # 28% Я (Супер-админ)
+    'development': 0.19, # 19% Развитие проекта
+    'tax': 0.06          # 6% Налог
+}
 
 # ТВОИ РЕКВИЗИТЫ
 PAYMENT_DETAILS = """
@@ -52,10 +60,10 @@ def is_super_admin(user_id):
 
 def get_admin_role(user_id):
     if user_id == SUPER_ADMIN_ID:
-        return "super_admin"
+        return "СУПЕР-АДМИН"
     elif user_id == SUPPORT_ADMIN_ID:
-        return "support_admin"
-    return "user"
+        return "МЕНЕДЖЕР"
+    return "ПОЛЬЗОВАТЕЛЬ"
 
 # ==================== КЛАВИАТУРЫ ====================
 async def get_gifts_keyboard():
@@ -128,10 +136,8 @@ async def cmd_start(message: types.Message):
     # Если админ — показываем админ-панель
     if is_admin(message.from_user.id):
         role = get_admin_role(message.from_user.id)
-        role_name = "СУПЕР-АДМИН" if role == "super_admin" else "МЕНЕДЖЕР"
-        
         await message.answer(
-            f"👋 <b>Привет, {role_name}!</b>\n\n"
+            f"👋 <b>Привет, {role}!</b>\n\n"
             f"Выбери действие:",
             parse_mode="HTML",
             reply_markup=await get_admin_keyboard(message.from_user.id)
@@ -193,11 +199,22 @@ async def admin_panel(callback: types.CallbackQuery):
         total_income = sum(t['amount'] for t in transactions)
         total_fee = sum(t['fee'] for t in transactions)
         
+        # Расчёт распределения прибыли
+        lana_share = total_fee * PROFIT_SPLIT['lana']
+        admin_share = total_fee * PROFIT_SPLIT['admin']
+        dev_share = total_fee * PROFIT_SPLIT['development']
+        tax_share = total_fee * PROFIT_SPLIT['tax']
+        
         await callback.message.answer(
             f"📊 <b>Полная статистика бота</b>\n\n"
             f"📦 Всего заказов: {len(transactions)}\n"
             f"💵 Общий оборот: {int(total_income)}₽\n"
-            f"💰 Твоя прибыль (10%): {int(total_fee)}₽\n"
+            f"💰 Комиссия (10%): {int(total_fee)}₽\n\n"
+            f"📈 <b>Распределение прибыли:</b>\n"
+            f"👤 Лана (47%): {int(lana_share)}₽\n"
+            f"👤 Я (28%): {int(admin_share)}₽\n"
+            f"🚀 Развитие (19%): {int(dev_share)}₽\n"
+            f"📋 Налог (6%): {int(tax_share)}₽\n\n"
             f"✅ Успешных: {len(transactions)}",
             parse_mode="HTML"
         )
@@ -259,7 +276,7 @@ async def admin_panel(callback: types.CallbackQuery):
     
     # === ТОЛЬКО МЕНЕДЖЕР ===
     elif action == "messages":
-        if not is_super_admin(callback.from_user.id) and callback.from_user.id == SUPPORT_ADMIN_ID:
+        if callback.from_user.id == SUPPORT_ADMIN_ID:
             await callback.message.answer(
                 f"💬 <b>Сообщения от клиентов</b>\n\n"
                 f"Все сообщения пересылаются тебе автоматически.\n"
@@ -331,6 +348,12 @@ async def process_payment(callback: types.CallbackQuery):
     fee = gift['price'] * FEE_PERCENT
     await add_transaction(callback.from_user.id, gift['name'], gift['price'], fee)
     
+    # Расчёт распределения
+    lana_share = fee * PROFIT_SPLIT['lana']
+    admin_share = fee * PROFIT_SPLIT['admin']
+    dev_share = fee * PROFIT_SPLIT['development']
+    tax_share = fee * PROFIT_SPLIT['tax']
+    
     await callback.message.answer(
         f"✅ <b>Инструкция по оплате:</b>\n\n"
         f"🎁 Подарок: {gift['name']}\n"
@@ -354,7 +377,12 @@ async def process_payment(callback: types.CallbackQuery):
             f"👤 Юзер: @{callback.from_user.username or 'без username'}\n"
             f"🆔 ID: {callback.from_user.id}\n"
             f"💵 Сумма: {int(gift['price'])}₽\n"
-            f"🎁 Подарок: {gift['name']}\n"
+            f"💰 Комиссия: {int(fee)}₽\n\n"
+            f"📈 <b>Распределение:</b>\n"
+            f"👤 Лана (47%): {int(lana_share)}₽\n"
+            f"👤 Я (28%): {int(admin_share)}₽\n"
+            f"🚀 Развитие (19%): {int(dev_share)}₽\n"
+            f"📋 Налог (6%): {int(tax_share)}₽\n\n"
             f"📱 Ждём скриншот оплаты",
             parse_mode="HTML"
         )
@@ -373,7 +401,7 @@ async def show_requisites(callback: types.CallbackQuery):
 # ==================== ОБРАБОТКА СКРИНШОТОВ ====================
 @dp.message(F.photo)
 async def handle_screenshot(message: types.Message):
-    await message.forward(ADMIN_ID)
+    await message.forward(SUPPORT_ADMIN_ID)
     
     await message.answer(
         f"✅ <b>Скриншот получен!</b>\n\n"
@@ -435,11 +463,22 @@ async def cmd_stats(message: types.Message):
     total_income = sum(t['amount'] for t in transactions)
     total_fee = sum(t['fee'] for t in transactions)
     
+    # Расчёт распределения прибыли
+    lana_share = total_fee * PROFIT_SPLIT['lana']
+    admin_share = total_fee * PROFIT_SPLIT['admin']
+    dev_share = total_fee * PROFIT_SPLIT['development']
+    tax_share = total_fee * PROFIT_SPLIT['tax']
+    
     await message.answer(
         f"📊 <b>Полная статистика бота</b>\n\n"
         f"📦 Всего заказов: {len(transactions)}\n"
         f"💵 Общий оборот: {int(total_income)}₽\n"
-        f"💰 Твоя прибыль (10%): {int(total_fee)}₽\n"
+        f"💰 Комиссия (10%): {int(total_fee)}₽\n\n"
+        f"📈 <b>Распределение прибыли:</b>\n"
+        f"👤 Лана (47%): {int(lana_share)}₽\n"
+        f"👤 Я (28%): {int(admin_share)}₽\n"
+        f"🚀 Развитие (19%): {int(dev_share)}₽\n"
+        f"📋 Налог (6%): {int(tax_share)}₽\n\n"
         f"✅ Успешных: {len(transactions)}",
         parse_mode="HTML"
     )
@@ -533,7 +572,8 @@ async def cmd_settings(message: types.Message):
         f"Изменения вносятся через код на GitHub:\n"
         f"• Реквизиты для оплаты\n"
         f"• Комиссия\n"
-        f"• Список подарков",
+        f"• Список подарков\n"
+        f"• Распределение прибыли",
         parse_mode="HTML"
     )
 
@@ -565,11 +605,18 @@ async def main():
     print("🚀 Бот запущен! Работаю 24/7!")
     print(f"👑 Супер-админ: {SUPER_ADMIN_ID}")
     print(f"👤 Менеджер: {SUPPORT_ADMIN_ID}")
+    print(f"💰 Распределение прибыли:")
+    print(f"   👤 Лана: {PROFIT_SPLIT['lana']*100:.0f}%")
+    print(f"   👤 Я: {PROFIT_SPLIT['admin']*100:.0f}%")
+    print(f"   🚀 Развитие: {PROFIT_SPLIT['development']*100:.0f}%")
+    print(f"   📋 Налог: {PROFIT_SPLIT['tax']*100:.0f}%")
     
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
 
 
 
