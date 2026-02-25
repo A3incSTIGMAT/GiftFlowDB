@@ -265,12 +265,13 @@ async def admin_panel(callback: types.CallbackQuery):
         
         await callback.message.answer(
             f"🔧 <b>Помощь супер-админу</b>\n\n"
-            f"📊 /stats - Полная статистика\n"
-            f"👥 /users - Список пользователей\n"
-            f"📦 /orders - Заказы\n"
-            f"📢 /broadcast - Рассылка\n"
-            f"⚙️ /settings - Настройки\n"
-            f"❓ /help - Эта справка",
+            f"📊 <b>/stats</b> - Полная статистика\n"
+            f"🗑️ <b>/reset_stats</b> - Сброс статистики\n"
+            f"👥 <b>/users</b> - Список пользователей\n"
+            f"📦 <b>/orders</b> - Заказы\n"
+            f"📢 <b>/broadcast</b> - Рассылка\n"
+            f"⚙️ <b>/settings</b> - Настройки\n"
+            f"❓ <b>/help</b> - Эта справка",
             parse_mode="HTML"
         )
     
@@ -448,7 +449,8 @@ async def handle_text(message: types.Message):
         parse_mode="HTML"
     )
 
-# ==================== АДМИН-КОМАНДЫ ====================
+# ==================== АДМИН-КОМАНДЫ (ВСЕ ДОСТУПНЫ ЧЕРЕЗ /) ====================
+
 @dp.message(Command("stats"))
 async def cmd_stats(message: types.Message):
     if not is_admin(message.from_user.id):
@@ -483,121 +485,9 @@ async def cmd_stats(message: types.Message):
         parse_mode="HTML"
     )
 
-@dp.message(Command("help"))
-async def cmd_help(message: types.Message):
-    if is_super_admin(message.from_user.id):
-        await message.answer(
-            f"📚 <b>Помощь (Супер-админ)</b>\n\n"
-            f"🎁 <b>/start</b> - Админ-панель\n"
-            f"⚙️ <b>/admin</b> - Админ-панель\n"
-            f"📊 <b>/stats</b> - Полная статистика\n"
-            f"🗑️ <b>/reset_stats</b> - Сброс статистики\n"
-            f"👥 <b>/users</b> - Список пользователей\n"
-            f"📦 <b>/orders</b> - Список заказов\n"
-            f"📢 <b>/broadcast</b> - Рассылка всем\n"
-            f"⚙️ <b>/settings</b> - Настройки\n"
-            f"❓ <b>/help</b> - Эта справка",
-            parse_mode="HTML"
-        )
-    elif is_admin(message.from_user.id):
-        await message.answer(
-            f"📚 <b>Помощь (Менеджер)</b>\n\n"
-            f"🎁 <b>/start</b> - Админ-панель\n"
-            f"⚙️ <b>/admin</b> - Админ-панель\n"
-            f"📦 <b>/orders</b> - Список заказов\n"
-            f"💬 <b>/messages</b> - Сообщения клиентов\n"
-            f"❓ <b>/help</b> - Эта справка",
-            parse_mode="HTML"
-        )
-    else:
-        await message.answer(
-            f"📚 <b>Помощь</b>\n\n"
-            f"🎁 <b>/start</b> - Главное меню с подарками\n"
-            f"❓ <b>/help</b> - Эта справка\n\n"
-            f"💡 Если возникли вопросы — пиши админу!",
-            parse_mode="HTML"
-        )
-
-@dp.message(Command("users"))
-async def cmd_users(message: types.Message):
-    if not is_super_admin(message.from_user.id):
-        await message.answer("❌ Только супер-админ")
-        return
-    
-    await message.answer(
-        f"👥 <b>Пользователи</b>\n\n"
-        f"Функция в разработке.\n"
-        f"Данные хранятся в базе данных Neon.",
-        parse_mode="HTML"
-    )
-
-@dp.message(Command("orders"))
-async def cmd_orders(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Доступ запрещён")
-        return
-    
-    transactions = await get_all_transactions()
-    if not transactions:
-        await message.answer("📦 Заказов ещё нет")
-        return
-    
-    recent = transactions[-10:][::-1]
-    text = "📦 <b>Последние 10 заказов:</b>\n\n"
-    for t in recent:
-        text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{t.get('username', 'нет')}\n"
-    
-    await message.answer(text, parse_mode="HTML")
-
-@dp.message(Command("broadcast"))
-async def cmd_broadcast(message: types.Message):
-    if not is_super_admin(message.from_user.id):
-        await message.answer("❌ Только супер-админ")
-        return
-    
-    await message.answer(
-        f"📢 <b>Рассылка</b>\n\n"
-        f"Отправь сообщение, которое нужно разослать всем пользователям.\n"
-        f"Или отмени командой /cancel",
-        parse_mode="HTML"
-    )
-
-@dp.message(Command("settings"))
-async def cmd_settings(message: types.Message):
-    if not is_super_admin(message.from_user.id):
-        await message.answer("❌ Только супер-админ")
-        return
-    
-    await message.answer(
-        f"⚙️ <b>Настройки</b>\n\n"
-        f"Изменения вносятся через код на GitHub:\n"
-        f"• Реквизиты для оплаты\n"
-        f"• Комиссия\n"
-        f"• Список подарков\n"
-        f"• Распределение прибыли",
-        parse_mode="HTML"
-    )
-
-@dp.message(Command("messages"))
-async def cmd_messages(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Доступ запрещён")
-        return
-    
-    await message.answer(
-        f"💬 <b>Сообщения от клиентов</b>\n\n"
-        f"Все сообщения пересылаются автоматически.\n"
-        f"Проверяй личные сообщения от бота.",
-        parse_mode="HTML"
-    )
-
-@dp.message(Command("cancel"))
-async def cmd_cancel(message: types.Message):
-    await message.answer("❌ Отменено")
-
-# ==================== СБРОС СТАТИСТИКИ ====================
 @dp.message(Command("reset_stats"))
 async def cmd_reset_stats(message: types.Message):
+    """Сброс статистики - ТОЛЬКО СУПЕР-АДМИН"""
     if not is_super_admin(message.from_user.id):
         await message.answer("❌ Только супер-админ!")
         return
@@ -640,6 +530,128 @@ async def cancel_reset_stats(callback: types.CallbackQuery):
     await callback.message.delete()
     await callback.answer("❌ Отменено")
 
+@dp.message(Command("users"))
+async def cmd_users(message: types.Message):
+    """Список пользователей - ТОЛЬКО СУПЕР-АДМИН"""
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Только супер-админ")
+        return
+    
+    await message.answer(
+        f"👥 <b>Пользователи</b>\n\n"
+        f"Функция в разработке.\n"
+        f"Данные хранятся в базе данных Neon.",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("orders"))
+async def cmd_orders(message: types.Message):
+    """Список заказов - ВСЕ АДМИНЫ"""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Доступ запрещён")
+        return
+    
+    transactions = await get_all_transactions()
+    if not transactions:
+        await message.answer("📦 Заказов ещё нет")
+        return
+    
+    recent = transactions[-10:][::-1]
+    text = "📦 <b>Последние 10 заказов:</b>\n\n"
+    for t in recent:
+        text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{t.get('username', 'нет')}\n"
+    
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: types.Message):
+    """Рассылка - ТОЛЬКО СУПЕР-АДМИН"""
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Только супер-админ")
+        return
+    
+    await message.answer(
+        f"📢 <b>Рассылка</b>\n\n"
+        f"Отправь сообщение, которое нужно разослать всем пользователям.\n"
+        f"Или отмени командой /cancel",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: types.Message):
+    """Настройки - ТОЛЬКО СУПЕР-АДМИН"""
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Только супер-админ")
+        return
+    
+    await message.answer(
+        f"⚙️ <b>Настройки</b>\n\n"
+        f"Изменения вносятся через код на GitHub:\n"
+        f"• Реквизиты для оплаты\n"
+        f"• Комиссия\n"
+        f"• Список подарков\n"
+        f"• Распределение прибыли",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("messages"))
+async def cmd_messages(message: types.Message):
+    """Сообщения от клиентов - ВСЕ АДМИНЫ"""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Доступ запрещён")
+        return
+    
+    await message.answer(
+        f"💬 <b>Сообщения от клиентов</b>\n\n"
+        f"Все сообщения пересылаются автоматически.\n"
+        f"Проверяй личные сообщения от бота.",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    """Справка - ВСЕ"""
+    if is_super_admin(message.from_user.id):
+        await message.answer(
+            f"📚 <b>Помощь (Супер-админ)</b>\n\n"
+            f"🎁 <b>/start</b> - Админ-панель\n"
+            f"⚙️ <b>/admin</b> - Админ-панель\n"
+            f"📊 <b>/stats</b> - Полная статистика\n"
+            f"🗑️ <b>/reset_stats</b> - Сброс статистики\n"
+            f"👥 <b>/users</b> - Список пользователей\n"
+            f"📦 <b>/orders</b> - Список заказов\n"
+            f"📢 <b>/broadcast</b> - Рассылка всем\n"
+            f"⚙️ <b>/settings</b> - Настройки\n"
+            f"💬 <b>/messages</b> - Сообщения клиентов\n"
+            f"❓ <b>/help</b> - Эта справка\n"
+            f"❌ <b>/cancel</b> - Отменить действие",
+            parse_mode="HTML"
+        )
+    elif is_admin(message.from_user.id):
+        await message.answer(
+            f"📚 <b>Помощь (Менеджер)</b>\n\n"
+            f"🎁 <b>/start</b> - Админ-панель\n"
+            f"⚙️ <b>/admin</b> - Админ-панель\n"
+            f"📦 <b>/orders</b> - Список заказов\n"
+            f"💬 <b>/messages</b> - Сообщения клиентов\n"
+            f"❓ <b>/help</b> - Эта справка\n"
+            f"❌ <b>/cancel</b> - Отменить действие",
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            f"📚 <b>Помощь</b>\n\n"
+            f"🎁 <b>/start</b> - Главное меню с подарками\n"
+            f"❓ <b>/help</b> - Эта справка\n\n"
+            f"💡 Если возникли вопросы — пиши админу!",
+            parse_mode="HTML"
+        )
+
+@dp.message(Command("cancel"))
+async def cmd_cancel(message: types.Message):
+    """Отмена действия - ВСЕ"""
+    await message.answer("❌ Отменено")
+
 # ==================== ЗАПУСК ====================
 async def main():
     print("🔄 Инициализация базы данных...")
@@ -661,5 +673,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
