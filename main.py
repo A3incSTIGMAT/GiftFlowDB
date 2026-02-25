@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from database import init_db, get_user, add_user, get_all_gifts, add_transaction, get_all_transactions
+from database import init_db, get_user, add_user, get_all_gifts, add_transaction, get_all_transactions, clear_transactions
 from keep_alive import keep_alive
 
 # ==================== КОНФИГ ====================
@@ -491,6 +491,7 @@ async def cmd_help(message: types.Message):
             f"🎁 <b>/start</b> - Админ-панель\n"
             f"⚙️ <b>/admin</b> - Админ-панель\n"
             f"📊 <b>/stats</b> - Полная статистика\n"
+            f"🗑️ <b>/reset_stats</b> - Сброс статистики\n"
             f"👥 <b>/users</b> - Список пользователей\n"
             f"📦 <b>/orders</b> - Список заказов\n"
             f"📢 <b>/broadcast</b> - Рассылка всем\n"
@@ -594,6 +595,51 @@ async def cmd_messages(message: types.Message):
 async def cmd_cancel(message: types.Message):
     await message.answer("❌ Отменено")
 
+# ==================== СБРОС СТАТИСТИКИ ====================
+@dp.message(Command("reset_stats"))
+async def cmd_reset_stats(message: types.Message):
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Только супер-админ!")
+        return
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, сбросить", callback_data="confirm_reset_stats")
+    builder.button(text="❌ Отмена", callback_data="cancel_reset_stats")
+    builder.adjust(2)
+    
+    await message.answer(
+        f"⚠️ <b>Сброс статистики</b>\n\n"
+        f"Вы уверены, что хотите удалить ВСЕ транзакции?\n"
+        f"Это действие нельзя отменить!",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+@dp.callback_query(F.data == "confirm_reset_stats")
+async def confirm_reset_stats(callback: types.CallbackQuery):
+    if not is_super_admin(callback.from_user.id):
+        await callback.answer("❌ Доступ запрещён", show_alert=True)
+        return
+    
+    try:
+        await clear_transactions()
+        
+        await callback.message.answer(
+            f"✅ <b>Статистика сброшена!</b>\n\n"
+            f"Все транзакции удалены.\n"
+            f"Бот готов к новой работе! 🚀",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {e}")
+    
+    await callback.answer()
+
+@dp.callback_query(F.data == "cancel_reset_stats")
+async def cancel_reset_stats(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("❌ Отменено")
+
 # ==================== ЗАПУСК ====================
 async def main():
     print("🔄 Инициализация базы данных...")
@@ -615,10 +661,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
-
-
 
 
