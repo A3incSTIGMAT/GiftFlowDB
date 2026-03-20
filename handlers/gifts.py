@@ -2,6 +2,8 @@ from aiogram import Router, types, F
 from database import get_gift_by_id, add_transaction, get_all_gifts
 from keyboards import get_gift_detail_keyboard, get_gifts_keyboard
 from donatepay import create_donatepay_invoice
+from config import ADMIN_IDS, FEE_PERCENT, PROFIT_SPLIT
+import asyncio
 
 router = Router()
 
@@ -51,6 +53,16 @@ async def pay_gift(callback: types.CallbackQuery):
     )
     
     if payment_url:
+        # Сохраняем транзакцию
+        fee = int(gift['price'] * FEE_PERCENT)
+        await add_transaction(
+            callback.from_user.id,
+            callback.from_user.username,
+            gift['name'],
+            gift['price'],
+            fee
+        )
+        
         await callback.message.edit_text(
             f"✅ <b>Счёт создан!</b>\n\n"
             f"🎁 Подарок: {gift['name']}\n"
