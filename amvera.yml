@@ -1,9 +1,10 @@
 meta:
   environment: python
   version: 3.11
+  toolchain: pip
 build:
   requirements: requirements.txt
 run:
   command: python main.py
   container_port: 8080
-  persistenceMount: /data
+  persistence_mount: /data
