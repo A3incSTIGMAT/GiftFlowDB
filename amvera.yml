@@ -6,3 +6,4 @@ build:
 run:
   command: python main.py
   container_port: 8080
+  persistenceMount: /data
