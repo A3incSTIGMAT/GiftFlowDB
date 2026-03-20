@@ -1,0 +1,8 @@
+meta:
+  environment: python
+  version: 3.11
+build:
+  requirements: requirements.txt
+run:
+  command: python main.py
+  container_port: 8080
