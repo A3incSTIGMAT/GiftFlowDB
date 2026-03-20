@@ -35,6 +35,48 @@ async def get_gifts_keyboard():
             callback_data=f"gift_{gift['id']}"
         )
     
-    builder.button(text="⬅️ Назад", callback_data="back_to_main")
+    builder.row(
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main"),
+        width=1
+    )
+    
     builder.adjust(1)
+    return builder.as_markup()
+
+async def get_gift_detail_keyboard(gift_id: int):
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="💳 Оплатить", callback_data=f"pay_{gift_id}"),
+        width=1
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="⬅️ К списку", callback_data="show_gifts"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main"),
+        width=2
+    )
+    
+    return builder.as_markup()
+
+async def get_back_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ Назад", callback_data="show_gifts")
+    builder.button(text="🏠 Главное меню", callback_data="back_to_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+async def get_admin_keyboard(user_id: int):
+    from config import SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
+    
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text="📦 Заказы", callback_data="admin_orders")
+    builder.button(text="📸 Галерея", callback_data="admin_gallery")
+    builder.button(text="🏠 Главное меню", callback_data="back_to_main")
+    
+    if user_id == SUPER_ADMIN_ID:
+        builder.button(text="📊 Статистика", callback_data="admin_stats")
+    
+    builder.adjust(2)
     return builder.as_markup()
