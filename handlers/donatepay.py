@@ -1,8 +1,12 @@
 import aiohttp
 import logging
+from aiogram import Router
 from config import DONATEPAY_API_KEY, DONATEPAY_WALLET_ID
 
 logger = logging.getLogger(__name__)
+
+# Создаём пустой роутер (нужен для импорта в __init__.py)
+router = Router()
 
 async def create_donatepay_invoice(amount: int, description: str, user_id: int) -> str:
     """Создаёт счёт в DonatePay и возвращает ссылку на оплату"""
