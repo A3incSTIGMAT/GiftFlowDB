@@ -58,6 +58,7 @@ async def init_db():
             """)
             
             # === ТАБЛИЦА ТРАНЗАКЦИЙ (ЗАКАЗЫ) ===
+            # ВНИМАНИЕ: больше нет поля fee! Весь донат распределяется по долям
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS transactions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +67,6 @@ async def init_db():
                     gift_id INTEGER,
                     gift_name TEXT,
                     amount INTEGER NOT NULL,
-                    fee INTEGER DEFAULT 0,
                     payment_id TEXT,
                     payment_system TEXT DEFAULT 'donatepay',
                     status TEXT DEFAULT 'pending',
@@ -161,13 +161,9 @@ async def update_cached_stats():
             cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'completed'")
             total_orders = (await cursor.fetchone())[0]
             
-            # Общая сумма
+            # Общая сумма (весь оборот)
             cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'completed'")
             total_amount = (await cursor.fetchone())[0] or 0
-            
-            # Общая комиссия
-            cursor = await db.execute("SELECT SUM(fee) FROM transactions WHERE status = 'completed'")
-            total_fee = (await cursor.fetchone())[0] or 0
             
             # Сохраняем в таблицу stats
             await db.execute(
@@ -177,10 +173,6 @@ async def update_cached_stats():
             await db.execute(
                 "INSERT OR REPLACE INTO stats (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
                 ("total_amount", str(total_amount))
-            )
-            await db.execute(
-                "INSERT OR REPLACE INTO stats (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                ("total_fee", str(total_fee))
             )
             await db.commit()
             
@@ -269,14 +261,14 @@ async def get_gift_by_id(gift_id: int):
         return None
 
 
-async def add_transaction(user_id: int, username: str, gift_id: int, gift_name: str, amount: int, fee: int, payment_id: str = None):
-    """Добавить транзакцию"""
+async def add_transaction(user_id: int, username: str, gift_id: int, gift_name: str, amount: int, payment_id: str = None):
+    """Добавить транзакцию (без комиссии, весь донат распределяется по долям)"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute(
-                """INSERT INTO transactions (user_id, username, gift_id, gift_name, amount, fee, payment_id, status, completed_at) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', CURRENT_TIMESTAMP)""",
-                (user_id, username, gift_id, gift_name, amount, fee, payment_id)
+                """INSERT INTO transactions (user_id, username, gift_id, gift_name, amount, payment_id, status, completed_at) 
+                   VALUES (?, ?, ?, ?, ?, ?, 'completed', CURRENT_TIMESTAMP)""",
+                (user_id, username, gift_id, gift_name, amount, payment_id)
             )
             await db.commit()
             transaction_id = cursor.lastrowid
@@ -296,7 +288,7 @@ async def get_all_transactions(limit: int = 50):
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute(
-                """SELECT user_id, username, gift_name, amount, fee, status, created_at, completed_at 
+                """SELECT user_id, username, gift_name, amount, status, created_at, completed_at 
                    FROM transactions ORDER BY created_at DESC LIMIT ?""",
                 (limit,)
             )
@@ -306,10 +298,9 @@ async def get_all_transactions(limit: int = 50):
                 "username": r[1],
                 "gift_name": r[2],
                 "amount": r[3],
-                "fee": r[4],
-                "status": r[5],
-                "created_at": r[6],
-                "completed_at": r[7]
+                "status": r[4],
+                "created_at": r[5],
+                "completed_at": r[6]
             } for r in rows]
     except Exception as e:
         logger.error(f"Ошибка get_all_transactions: {e}")
@@ -317,20 +308,16 @@ async def get_all_transactions(limit: int = 50):
 
 
 async def get_stats():
-    """Получить статистику"""
+    """Получить статистику (общий оборот без вычета комиссии)"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             # Количество заказов
             cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'completed'")
             total_orders = (await cursor.fetchone())[0]
             
-            # Общая сумма
+            # Общая сумма (весь оборот)
             cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'completed'")
             total_amount = (await cursor.fetchone())[0] or 0
-            
-            # Общая комиссия
-            cursor = await db.execute("SELECT SUM(fee) FROM transactions WHERE status = 'completed'")
-            total_fee = (await cursor.fetchone())[0] or 0
             
             # Количество пользователей
             cursor = await db.execute("SELECT COUNT(*) FROM users")
@@ -339,7 +326,6 @@ async def get_stats():
             return {
                 "total_orders": total_orders,
                 "total_amount": total_amount,
-                "total_fee": total_fee,
                 "total_users": total_users
             }
     except Exception as e:
@@ -347,7 +333,6 @@ async def get_stats():
         return {
             "total_orders": 0,
             "total_amount": 0,
-            "total_fee": 0,
             "total_users": 0
         }
 
