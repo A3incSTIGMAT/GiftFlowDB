@@ -3,20 +3,25 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import TWITCH_URL, INSTAGRAM_URL, DONATEPAY_URL
 from database import get_all_gifts
 
+
 async def get_main_menu_keyboard():
+    """Главное меню для обычных пользователей"""
     builder = InlineKeyboardBuilder()
     
+    # Ряд с соцсетями
     builder.row(
         InlineKeyboardButton(text="📺 Twitch", url=TWITCH_URL),
         InlineKeyboardButton(text="📷 Instagram", url=INSTAGRAM_URL),
         width=2
     )
     
+    # Кнопка каталога подарков
     builder.row(
         InlineKeyboardButton(text="🎁 Каталог подарков", callback_data="show_gifts"),
         width=1
     )
     
+    # Кнопки DonatePay и помощь
     builder.row(
         InlineKeyboardButton(text="💳 DonatePay", url=DONATEPAY_URL),
         InlineKeyboardButton(text="💬 Помощь", callback_data="contact_support"),
@@ -25,7 +30,9 @@ async def get_main_menu_keyboard():
     
     return builder.as_markup()
 
+
 async def get_gifts_keyboard():
+    """Клавиатура со списком подарков"""
     gifts = await get_all_gifts()
     builder = InlineKeyboardBuilder()
     
@@ -43,7 +50,9 @@ async def get_gifts_keyboard():
     builder.adjust(1)
     return builder.as_markup()
 
+
 async def get_gift_detail_keyboard(gift_id: int):
+    """Клавиатура для конкретного подарка"""
     builder = InlineKeyboardBuilder()
     
     builder.row(
@@ -59,24 +68,37 @@ async def get_gift_detail_keyboard(gift_id: int):
     
     return builder.as_markup()
 
+
 async def get_back_keyboard():
+    """Клавиатура для возврата"""
     builder = InlineKeyboardBuilder()
     builder.button(text="⬅️ Назад", callback_data="show_gifts")
     builder.button(text="🏠 Главное меню", callback_data="back_to_main")
     builder.adjust(1)
     return builder.as_markup()
 
+
 async def get_admin_keyboard(user_id: int):
-    from config import SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
+    """Админ-панель (разная для супер-админа и менеджера)"""
+    from config import SUPER_ADMIN_ID
     
     builder = InlineKeyboardBuilder()
     
-    builder.button(text="📦 Заказы", callback_data="admin_orders")
-    builder.button(text="📸 Галерея", callback_data="admin_gallery")
-    builder.button(text="🏠 Главное меню", callback_data="back_to_main")
+    builder.row(
+        InlineKeyboardButton(text="📦 Заказы", callback_data="admin_orders"),
+        InlineKeyboardButton(text="📸 Галерея", callback_data="admin_gallery"),
+        width=2
+    )
     
     if user_id == SUPER_ADMIN_ID:
-        builder.button(text="📊 Статистика", callback_data="admin_stats")
+        builder.row(
+            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
+            width=1
+        )
     
-    builder.adjust(2)
+    builder.row(
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main"),
+        width=1
+    )
+    
     return builder.as_markup()
