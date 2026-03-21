@@ -103,7 +103,6 @@ async def pay_gift(callback: types.CallbackQuery):
         )
         
         # Уведомляем админов
-        from config import ADMIN_IDS
         from aiogram import Bot
         from config import BOT_TOKEN
         
