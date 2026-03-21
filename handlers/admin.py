@@ -1,17 +1,17 @@
+import logging
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
 from database import get_all_transactions, add_gallery_photo, get_gallery_photos
 from keyboards import get_admin_keyboard
 
+logger = logging.getLogger(__name__)
 router = Router()
 
-async def get_admin_keyboard(user_id: int):
-    from keyboards import get_admin_keyboard as kb
-    return await kb(user_id)
 
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
+    """Вход в админ-панель"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Доступ запрещён")
         return
@@ -23,14 +23,17 @@ async def cmd_admin(message: types.Message):
         reply_markup=await get_admin_keyboard(message.from_user.id)
     )
 
+
 @router.callback_query(F.data.startswith("admin_"))
 async def admin_actions(callback: types.CallbackQuery):
+    """Обработка кнопок админ-панели"""
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("❌ Доступ запрещён")
         return
     
     action = callback.data.split("_")[1]
     
+    # Заказы
     if action == "orders":
         transactions = await get_all_transactions()
         if not transactions:
@@ -39,19 +42,24 @@ async def admin_actions(callback: types.CallbackQuery):
         
         text = "📦 <b>Последние заказы:</b>\n\n"
         for t in transactions[:10]:
-            text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{t.get('username', 'нет')}\n"
+            username = t.get('username', 'нет')
+            text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{username}\n"
         await callback.message.answer(text, parse_mode="HTML")
     
+    # Статистика (только супер-админ)
     elif action == "stats" and callback.from_user.id == SUPER_ADMIN_ID:
         transactions = await get_all_transactions()
         total = sum(t['amount'] for t in transactions)
+        count = len(transactions)
+        
         await callback.message.answer(
             f"📊 <b>Статистика</b>\n\n"
-            f"📦 Заказов: {len(transactions)}\n"
+            f"📦 Заказов: {count}\n"
             f"💰 Оборот: {total}₽",
             parse_mode="HTML"
         )
     
+    # Галерея (только менеджер или супер-админ)
     elif action == "gallery":
         await callback.message.answer(
             "📸 <b>Галерея фото</b>\n\n"
@@ -62,9 +70,11 @@ async def admin_actions(callback: types.CallbackQuery):
     
     await callback.answer()
 
+
 @router.message(F.photo)
 async def handle_gallery_photo(message: types.Message):
-    if message.from_user.id != SUPPORT_ADMIN_ID:
+    """Обработка загрузки фото в галерею (только для менеджера)"""
+    if message.from_user.id not in [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]:
         return
     
     photo = message.photo[-1]
@@ -78,8 +88,10 @@ async def handle_gallery_photo(message: types.Message):
         parse_mode="HTML"
     )
 
+
 @router.message(Command("gallery"))
 async def show_gallery(message: types.Message):
+    """Показать галерею фото"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Доступ запрещён")
         return
