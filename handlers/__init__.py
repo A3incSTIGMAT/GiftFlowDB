@@ -3,7 +3,7 @@ from .gifts import router as gifts_router
 from .admin import router as admin_router
 from .donatepay import router as donatepay_router
 
-# Список всех роутеров (обязательно!)
+# Список всех роутеров
 routers = [
     start_router,
     gifts_router,
