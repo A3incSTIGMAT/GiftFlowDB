@@ -10,7 +10,7 @@ ADMIN_IDS = [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]
 DONATEPAY_API_KEY = os.getenv("DONATEPAY_API_KEY")
 DONATEPAY_WALLET_ID = os.getenv("DONATEPAY_WALLET_ID", "1472367")
 
-# Соцсети
+# Соцсети (проверь, что ссылки правильные!)
 TWITCH_URL = "https://twitch.tv/lanatwitchh"
 INSTAGRAM_URL = "https://instagram.com/lanawolfyy"
 DONATEPAY_URL = f"https://donatepay.ru/don/{DONATEPAY_WALLET_ID}"
@@ -27,5 +27,5 @@ PROFIT_SPLIT = {
     'tax': 0.06
 }
 
-# База данных (ВАЖНО: сохраняем в /data)
+# База данных (ВАЖНО: сохраняем в /data на Amvera)
 DB_PATH = os.getenv("DB_PATH", "/data/gift_bot.db")
