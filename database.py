@@ -21,11 +21,9 @@ async def ensure_db_directory():
 async def init_db():
     """Инициализация базы данных со всеми таблицами"""
     try:
-        # Убеждаемся, что папка существует
         await ensure_db_directory()
         
         async with aiosqlite.connect(DB_PATH) as db:
-            # Включаем поддержку внешних ключей
             await db.execute("PRAGMA foreign_keys = ON")
             
             # === ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ===
@@ -48,7 +46,7 @@ async def init_db():
                     name TEXT NOT NULL,
                     price INTEGER NOT NULL,
                     description TEXT,
-                    photo_id TEXT,
+                    icon TEXT DEFAULT '🎁',
                     category TEXT,
                     sort_order INTEGER DEFAULT 0,
                     is_active INTEGER DEFAULT 1,
@@ -57,8 +55,7 @@ async def init_db():
                 )
             """)
             
-            # === ТАБЛИЦА ТРАНЗАКЦИЙ (ЗАКАЗЫ) ===
-            # ВНИМАНИЕ: больше нет поля fee! Весь донат распределяется по долям
+            # === ТАБЛИЦА ТРАНЗАКЦИЙ ===
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS transactions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +73,7 @@ async def init_db():
                 )
             """)
             
-            # === ТАБЛИЦА ГАЛЕРЕИ (ФОТО ДЛЯ ПОСТОВ) ===
+            # === ТАБЛИЦА ГАЛЕРЕИ ===
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS gallery (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,7 +86,7 @@ async def init_db():
                 )
             """)
             
-            # === ТАБЛИЦА СТАТИСТИКИ (КЭШ) ===
+            # === ТАБЛИЦА СТАТИСТИКИ ===
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS stats (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,10 +99,7 @@ async def init_db():
             await db.commit()
             logger.info(f"✅ База данных инициализирована: {DB_PATH}")
         
-        # Заполняем подарки, если таблица пустая
         await init_gifts()
-        
-        # Обновляем статистику
         await update_cached_stats()
         
     except Exception as e:
@@ -122,29 +116,48 @@ async def init_gifts():
             
             if count == 0:
                 gifts = [
-                    ("По приколу", 222, "Просто так, для настроения", "default"),
-                    ("Кофеек", 300, "Чашечка ароматного кофе ☕", "food"),
-                    ("На сижку", 500, "Для перекура после катки 🚬", "default"),
-                    ("Вкусняшки Марсику", 1111, "Коту на вкусняшки 🐱", "pet"),
-                    ("Вклад в биполярку", 1222, "Поддержка ментального здоровья 💊", "default"),
-                    ("Новые фотки", 1555, "Эксклюзивные фото в подарок 📸", "content"),
-                    ("Пакет киндеров", 2000, "Сюрприз для сладкоежек 🍫", "food"),
-                    ("Двойной пакет киндеров", 3333, "Двойная порция сюрприза 🍫🍫", "food"),
-                    ("На психушку", 4444, "Запасной план 🏥", "default"),
-                    ("На кофточку", 5000, "Обновка в гардероб 👕", "clothes"),
-                    ("Продать душу дьяволу", 6666, "Рискованное вложение 😈", "special"),
-                    ("На кейсики в КС", 10000, "Кейсы, кейсы, кейсы 🎁", "game"),
-                    ("Татушка", 15000, "Новая татуировка 🖤", "special"),
-                    ("Косплей на стрим", 20000, "Косплей в следующий стрим 🎭", "content"),
-                    ("Нож в КС", 25000, "Красивый нож для красивых фрагов 🔪", "game"),
-                    ("НА МЕЧТУ", 150000, "Самый крупный вклад в мечту ✨", "special")
+                    # МИКРО-ДОНАТЫ (10-100₽)
+                    ("🍬 Конфетка", 10, "Маленькая сладость для настроения 🍬", "🍬", "micro"),
+                    ("❤️ Лайк в чат", 20, "Лайк в прямом эфире! ❤️", "❤️", "micro"),
+                    ("🍪 Печенька", 30, "К чайку в перерыве 🍪", "🍪", "micro"),
+                    ("🧸 Обнимашка", 50, "Тёплый виртуальный хаг 🧸", "🧸", "micro"),
+                    ("☕ Мини-кофе", 50, "Маленькая порция бодрости ☕", "☕", "micro"),
+                    ("🎵 Заказ трека", 75, "Любую песню на стрим 🎵", "🎵", "micro"),
+                    ("😺 Корм Марсику", 100, "Котику на вкусняшки 🐱", "😺", "pet"),
+                    ("📢 Упоминание", 100, "Твой ник в прямом эфире! 📢", "📢", "micro"),
+                    
+                    # СРЕДНИЕ ДОНАТЫ (150-500₽)
+                    ("☕ Кофеек", 150, "Чашечка ароматного кофе ☕", "☕", "food"),
+                    ("🎮 Выбор карты", 150, "Ты выбираешь следующую карту в CS 🎮", "🎮", "game"),
+                    ("📷 Фото в сторис", 200, "Твоё имя в Instagram Stories 📷", "📷", "content"),
+                    ("🎲 Кинуть кубик", 200, "Стримерша выполняет случайное действие 🎲", "🎲", "game"),
+                    ("🎁 Кейс в КС", 300, "Открываем кейс вместе! 🎁", "🎁", "game"),
+                    ("🔥 Панчлайн", 350, "Смешная фраза в твою честь 🔥", "🔥", "default"),
+                    ("🐱 Игрушка Марсику", 400, "Новая игрушка для котика 🐱", "🐱", "pet"),
+                    ("🎬 Реакция на мем", 500, "Стримерша реагирует на твой мем 🎬", "🎬", "content"),
+                    
+                    # ОСТАЛЬНЫЕ ПОДАРКИ
+                    ("По приколу", 222, "Просто так, для настроения", "🎲", "default"),
+                    ("Вкусняшки Марсику", 1111, "Коту на вкусняшки 🐱", "🍖", "pet"),
+                    ("Вклад в биполярку", 1222, "Поддержка ментального здоровья 💊", "💊", "default"),
+                    ("Новые фотки", 1555, "Эксклюзивные фото в подарок 📸", "📸", "content"),
+                    ("Пакет киндеров", 2000, "Сюрприз для сладкоежек 🍫", "🍫", "food"),
+                    ("Двойной пакет киндеров", 3333, "Двойная порция сюрприза 🍫🍫", "🍫", "food"),
+                    ("На психушку", 4444, "Запасной план 🏥", "🏥", "default"),
+                    ("На кофточку", 5000, "Обновка в гардероб 👕", "👕", "clothes"),
+                    ("Продать душу дьяволу", 6666, "Рискованное вложение 😈", "😈", "special"),
+                    ("На кейсики в КС", 10000, "Кейсы, кейсы, кейсы 🎁", "🎁", "game"),
+                    ("Татушка", 15000, "Новая татуировка 🖤", "🖤", "special"),
+                    ("Косплей на стрим", 20000, "Косплей в следующий стрим 🎭", "🎭", "content"),
+                    ("Нож в КС", 25000, "Красивый нож для красивых фрагов 🔪", "🔪", "game"),
+                    ("НА МЕЧТУ", 150000, "Самый крупный вклад в мечту ✨", "✨", "special")
                 ]
                 
-                for idx, (name, price, desc, category) in enumerate(gifts):
+                for idx, (name, price, desc, icon, category) in enumerate(gifts):
                     await db.execute(
-                        """INSERT INTO gifts (name, price, description, category, sort_order, is_active) 
-                           VALUES (?, ?, ?, ?, ?, 1)""",
-                        (name, price, desc, category, idx)
+                        """INSERT INTO gifts (name, price, description, icon, category, sort_order, is_active) 
+                           VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                        (name, price, desc, icon, category, idx)
                     )
                 await db.commit()
                 logger.info(f"✅ Добавлено {len(gifts)} подарков в базу")
@@ -157,15 +170,12 @@ async def update_cached_stats():
     """Обновляет кэшированную статистику"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # Общее количество заказов
             cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'completed'")
             total_orders = (await cursor.fetchone())[0]
             
-            # Общая сумма (весь оборот)
             cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'completed'")
             total_amount = (await cursor.fetchone())[0] or 0
             
-            # Сохраняем в таблицу stats
             await db.execute(
                 "INSERT OR REPLACE INTO stats (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
                 ("total_orders", str(total_orders))
@@ -224,14 +234,14 @@ async def add_user(user_id: int, username: str = None, first_name: str = None, l
 
 
 async def get_all_gifts():
-    """Получить все активные подарки"""
+    """Получить все активные подарки с иконками"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute(
-                "SELECT id, name, price, description, category FROM gifts WHERE is_active = 1 ORDER BY sort_order, price"
+                "SELECT id, name, price, description, icon FROM gifts WHERE is_active = 1 ORDER BY sort_order, price"
             )
             rows = await cursor.fetchall()
-            return [{"id": r[0], "name": r[1], "price": r[2], "description": r[3], "category": r[4]} for r in rows]
+            return [{"id": r[0], "name": r[1], "price": r[2], "description": r[3], "icon": r[4]} for r in rows]
     except Exception as e:
         logger.error(f"Ошибка get_all_gifts: {e}")
         return []
@@ -242,7 +252,7 @@ async def get_gift_by_id(gift_id: int):
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute(
-                "SELECT id, name, price, description, category, photo_id FROM gifts WHERE id = ? AND is_active = 1",
+                "SELECT id, name, price, description, icon FROM gifts WHERE id = ? AND is_active = 1",
                 (gift_id,)
             )
             row = await cursor.fetchone()
@@ -252,8 +262,7 @@ async def get_gift_by_id(gift_id: int):
                     "name": row[1],
                     "price": row[2],
                     "description": row[3],
-                    "category": row[4],
-                    "photo_id": row[5]
+                    "icon": row[4]
                 }
             return None
     except Exception as e:
@@ -261,8 +270,30 @@ async def get_gift_by_id(gift_id: int):
         return None
 
 
+async def add_gift(name: str, price: int, description: str, icon: str = "🎁", category: str = "default"):
+    """Добавить новый подарок (только для админов)"""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            # Получаем максимальный sort_order
+            cursor = await db.execute("SELECT MAX(sort_order) FROM gifts")
+            max_order = (await cursor.fetchone())[0] or 0
+            new_order = max_order + 1
+            
+            await db.execute(
+                """INSERT INTO gifts (name, price, description, icon, category, sort_order, is_active) 
+                   VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                (name, price, description, icon, category, new_order)
+            )
+            await db.commit()
+            logger.info(f"✅ Добавлен новый подарок: {name} ({price}₽)")
+            return True
+    except Exception as e:
+        logger.error(f"Ошибка add_gift: {e}")
+        return False
+
+
 async def add_transaction(user_id: int, username: str, gift_id: int, gift_name: str, amount: int, payment_id: str = None):
-    """Добавить транзакцию (без комиссии, весь донат распределяется по долям)"""
+    """Добавить транзакцию"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute(
@@ -273,10 +304,7 @@ async def add_transaction(user_id: int, username: str, gift_id: int, gift_name: 
             await db.commit()
             transaction_id = cursor.lastrowid
             logger.info(f"✅ Транзакция {transaction_id} добавлена: {amount}₽ от {username}")
-            
-            # Обновляем кэш статистики
             await update_cached_stats()
-            
             return transaction_id
     except Exception as e:
         logger.error(f"Ошибка add_transaction: {e}")
@@ -308,18 +336,15 @@ async def get_all_transactions(limit: int = 50):
 
 
 async def get_stats():
-    """Получить статистику (общий оборот без вычета комиссии)"""
+    """Получить статистику"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # Количество заказов
             cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'completed'")
             total_orders = (await cursor.fetchone())[0]
             
-            # Общая сумма (весь оборот)
             cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'completed'")
             total_amount = (await cursor.fetchone())[0] or 0
             
-            # Количество пользователей
             cursor = await db.execute("SELECT COUNT(*) FROM users")
             total_users = (await cursor.fetchone())[0]
             
@@ -330,11 +355,7 @@ async def get_stats():
             }
     except Exception as e:
         logger.error(f"Ошибка get_stats: {e}")
-        return {
-            "total_orders": 0,
-            "total_amount": 0,
-            "total_users": 0
-        }
+        return {"total_orders": 0, "total_amount": 0, "total_users": 0}
 
 
 async def add_gallery_photo(photo_id: str, caption: str, created_by: int):
