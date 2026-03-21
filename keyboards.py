@@ -88,10 +88,10 @@ async def get_admin_keyboard(user_id: int):
         width=2
     )
     
-    # Кнопка "Добавить подарок" доступна всем админам
     builder.row(
         InlineKeyboardButton(text="🎁 Добавить подарок", callback_data="admin_add_gift"),
-        width=1
+        InlineKeyboardButton(text="📢 Создать пост", callback_data="admin_create_post"),
+        width=2
     )
     
     if user_id == SUPER_ADMIN_ID:
@@ -118,4 +118,43 @@ async def get_super_admin_choice_keyboard():
         width=2
     )
     
+    return builder.as_markup()
+
+
+async def get_post_options_keyboard():
+    """Клавиатура выбора источника фото для поста"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="📸 Из галереи", callback_data="post_from_gallery"),
+        InlineKeyboardButton(text="🆕 Новое фото", callback_data="post_new_photo"),
+        width=2
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_main"),
+        width=1
+    )
+    
+    return builder.as_markup()
+
+
+async def get_gallery_choice_keyboard(photos):
+    """Клавиатура выбора фото из галереи"""
+    builder = InlineKeyboardBuilder()
+    
+    for photo_id, caption, created_at in photos[:10]:
+        short_caption = caption[:30] + "..." if len(caption) > 30 else caption if caption else "без подписи"
+        button_text = f"📸 {short_caption}"
+        builder.button(
+            text=button_text,
+            callback_data=f"select_photo_{photo_id}"
+        )
+    
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_create_post"),
+        width=1
+    )
+    
+    builder.adjust(1)
     return builder.as_markup()
