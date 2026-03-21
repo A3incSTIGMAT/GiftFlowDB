@@ -5,7 +5,7 @@ from config import DONATEPAY_API_KEY, DONATEPAY_WALLET_ID
 
 logger = logging.getLogger(__name__)
 
-# Создаём роутер (обязательно!)
+# Создаём роутер
 router = Router()
 
 
@@ -30,8 +30,29 @@ async def create_donatepay_invoice(amount: int, description: str, user_id: int) 
                 logger.info(f"✅ Invoice created: {data}")
                 return data.get("payment_url")
             else:
-                logger.error(f"DonatePay error: {response.status}")
+                logger.error(f"DonatePay error: {response.status} - {await response.text()}")
                 return None
     except Exception as e:
         logger.error(f"DonatePay exception: {e}")
+        return None
+
+
+async def check_donatepay_invoice(invoice_id: str) -> dict:
+    """Проверяет статус счёта в DonatePay"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            response = await session.get(
+                f"https://donatepay.ru/api/v1/invoice/info",
+                headers={"Authorization": f"Bearer {DONATEPAY_API_KEY}"},
+                params={"invoice_id": invoice_id}
+            )
+            
+            if response.status == 200:
+                data = await response.json()
+                return data
+            else:
+                logger.error(f"DonatePay check error: {response.status}")
+                return None
+    except Exception as e:
+        logger.error(f"DonatePay check exception: {e}")
         return None
