@@ -8,20 +8,17 @@ async def get_main_menu_keyboard():
     """Главное меню для обычных пользователей"""
     builder = InlineKeyboardBuilder()
     
-    # Ряд с соцсетями
     builder.row(
         InlineKeyboardButton(text="📺 Twitch", url=TWITCH_URL),
         InlineKeyboardButton(text="📷 Instagram", url=INSTAGRAM_URL),
         width=2
     )
     
-    # Кнопка каталога подарков
     builder.row(
         InlineKeyboardButton(text="🎁 Каталог подарков", callback_data="show_gifts"),
         width=1
     )
     
-    # Кнопки DonatePay и помощь
     builder.row(
         InlineKeyboardButton(text="💳 DonatePay", url=DONATEPAY_URL),
         InlineKeyboardButton(text="💬 Помощь", callback_data="contact_support"),
