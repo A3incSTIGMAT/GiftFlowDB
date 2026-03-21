@@ -99,3 +99,16 @@ async def get_admin_keyboard(user_id: int):
     )
     
     return builder.as_markup()
+
+
+async def get_super_admin_choice_keyboard():
+    """Клавиатура выбора режима для супер-админа"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="👤 Режим пользователя", callback_data="mode_user"),
+        InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="mode_admin"),
+        width=2
+    )
+    
+    return builder.as_markup()
