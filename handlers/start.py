@@ -18,7 +18,6 @@ async def cmd_start(message: types.Message):
             await add_user(message.from_user.id, message.from_user.username)
             logger.info(f"Новый пользователь: {message.from_user.id}")
         
-        # Проверяем, админ ли пользователь
         if message.from_user.id in ADMIN_IDS:
             from handlers.admin import get_admin_keyboard
             
@@ -44,10 +43,7 @@ async def cmd_start(message: types.Message):
         
     except Exception as e:
         logger.error(f"Ошибка в /start: {e}")
-        await message.answer(
-            "❌ Произошла ошибка. Попробуй позже.",
-            parse_mode="HTML"
-        )
+        await message.answer("❌ Произошла ошибка. Попробуй позже.")
 
 
 @router.callback_query(F.data == "back_to_main")
@@ -93,14 +89,12 @@ async def contact_support(callback: types.CallbackQuery):
         await callback.answer("❌ Ошибка", show_alert=True)
 
 
-# Добавляем тестовую команду для проверки
+# Тестовая команда для проверки
 @router.message(Command("test"))
 async def cmd_test(message: types.Message):
-    """Тестовая команда для проверки работы бота"""
+    """Тестовая команда"""
     await message.answer(
         "✅ <b>Бот работает!</b>\n\n"
-        f"Твой ID: {message.from_user.id}\n"
-        f"Username: @{message.from_user.username or 'нет'}\n"
-        f"Имя: {message.from_user.first_name}",
+        f"Твой ID: {message.from_user.id}",
         parse_mode="HTML"
     )
