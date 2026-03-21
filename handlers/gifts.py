@@ -3,7 +3,7 @@ from aiogram import Router, types, F
 from database import get_gift_by_id, add_transaction, get_all_gifts
 from keyboards import get_gift_detail_keyboard, get_gifts_keyboard
 from donatepay import create_donatepay_invoice
-from config import ADMIN_IDS, PROFIT_SPLIT, TWITCH_URL, INSTAGRAM_URL, DONATEPAY_URL
+from config import ADMIN_IDS, PROFIT_SPLIT
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -67,12 +67,22 @@ async def pay_gift(callback: types.CallbackQuery):
         await callback.answer("❌ Подарок не найден")
         return
     
+    # Показываем пользователю, что идёт создание счёта
+    processing_msg = await callback.message.answer(
+        "⏳ <b>Создаём счёт...</b>\n\n"
+        "Пожалуйста, подожди несколько секунд.",
+        parse_mode="HTML"
+    )
+    
     # Создаём счёт в DonatePay
     payment_url = await create_donatepay_invoice(
         amount=gift['price'],
         description=gift['name'],
         user_id=callback.from_user.id
     )
+    
+    # Удаляем сообщение о загрузке
+    await processing_msg.delete()
     
     if payment_url:
         # Сохраняем транзакцию
@@ -92,7 +102,7 @@ async def pay_gift(callback: types.CallbackQuery):
         dev_share = amount * PROFIT_SPLIT['development']
         tax_share = amount * PROFIT_SPLIT['tax']
         
-        # Формируем сообщение с пояснением
+        # Юридическое уведомление
         legal_notice = (
             "💡 <b>Юридическая информация</b>\n"
             "Данный платёж является <b>добровольным пожертвованием (дарением)</b> "
@@ -142,30 +152,46 @@ async def pay_gift(callback: types.CallbackQuery):
         
     else:
         await callback.message.answer(
-            "❌ Ошибка создания счета. Попробуй позже.\n\n"
-            "Если проблема повторяется, обратись к администратору.",
+            "❌ <b>Ошибка создания счета</b>\n\n"
+            "Не удалось подключиться к платежной системе DonatePay.\n\n"
+            "🔧 <b>Возможные причины:</b>\n"
+            "• Технические работы на DonatePay\n"
+            "• Проблемы с API ключом\n"
+            "• Неверный кошелёк\n\n"
+            "💡 <b>Что делать?</b>\n"
+            "1️⃣ Попробуй позже\n"
+            "2️⃣ Проверь, что на DonatePay достаточно средств\n"
+            "3️⃣ Напиши администратору, если проблема повторяется\n\n"
+            "📞 <b>Альтернативный способ:</b>\n"
+            "Можно перевести донат напрямую по реквизитам, которые пришлёт админ.",
             parse_mode="HTML"
         )
     
     await callback.answer()
 
 
-@router.message(lambda message: message.text and "подарок" in message.text.lower())
+@router.message(lambda message: message.text and any(word in message.text.lower() for word in ["подарок", "донат", "оплата", "как оплатить"]))
 async def handle_gift_question(message: types.Message):
     """Обработка вопросов о подарках"""
     if message.from_user.id in ADMIN_IDS:
         return
     
     await message.answer(
-        "🎁 <b>О подарках</b>\n\n"
+        "🎁 <b>О подарках и донатах</b>\n\n"
         "Все подарки — это добровольные пожертвования в поддержку стримера.\n\n"
         "📜 <b>Как это работает:</b>\n"
         "1️⃣ Ты выбираешь подарок в каталоге\n"
-        "2️⃣ Нажимаешь «Оплатить» и переходишь на DonatePay\n"
-        "3️⃣ Совершаешь платёж (сумма фиксированная)\n"
-        "4️⃣ Подарок отображается в эфире и в профиле\n\n"
+        "2️⃣ Нажимаешь «Оплатить» — создаётся счёт\n"
+        "3️⃣ Переходишь по ссылке на DonatePay\n"
+        "4️⃣ Совершаешь платёж (сумма фиксированная)\n"
+        "5️⃣ Подарок отображается в эфире\n\n"
         "💡 <b>Важно:</b> Это не покупка товара, а выражение поддержки. "
         "Все платежи являются добровольными пожертвованиями.\n\n"
-        "📞 Вопросы? Напиши администратору — ответим в ближайшее время.",
+        "🔒 <b>Безопасность:</b>\n"
+        "Все платежи проходят через защищённый шлюз DonatePay.\n"
+        "Мы не храним данные твоих карт.\n\n"
+        "📞 <b>Проблемы с оплатой?</b>\n"
+        "Напиши администратору — ответим в ближайшее время.\n\n"
+        "Спасибо за поддержку! ❤️",
         parse_mode="HTML"
     )
