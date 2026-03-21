@@ -19,18 +19,15 @@ DONATEPAY_URL = f"https://donatepay.ru/don/{DONATEPAY_WALLET_ID}"
 STREAMER_NAME = "Лана"
 
 # ==================== ФИНАНСЫ ====================
-FEE_PERCENT = 0.10  # 10% комиссия
+FEE_PERCENT = 0.10
 PROFIT_SPLIT = {
-    'lana': 0.47,        # 47% Лана
-    'admin': 0.28,       # 28% Админ (ты)
-    'development': 0.19, # 19% Развитие
-    'tax': 0.06          # 6% Налог
+    'lana': 0.47,
+    'admin': 0.28,
+    'development': 0.19,
+    'tax': 0.06
 }
 
 # ==================== БАЗА ДАННЫХ ====================
-# ВАЖНО: на Amvera база данных должна храниться в папке /data
-# Иначе при перезапуске все данные будут потеряны
-DB_PATH = os.getenv("DB_PATH", "/data/gift_bot.db")
-
-# Для локального тестирования можно раскомментировать:
-# DB_PATH = os.getenv("DB_PATH", "gift_bot.db")
+# Используем /tmp (временная папка) — всегда доступна для записи
+# Или /app (рабочая папка) — тоже доступна
+DB_PATH = os.getenv("DB_PATH", "/app/gift_bot.db")
