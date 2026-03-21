@@ -1,8 +1,8 @@
 import logging
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
-from database import get_all_transactions, add_gallery_photo, get_gallery_photos
+from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, PROFIT_SPLIT
+from database import get_all_transactions, add_gallery_photo, get_gallery_photos, get_stats
 from keyboards import get_admin_keyboard
 
 logger = logging.getLogger(__name__)
@@ -11,16 +11,18 @@ router = Router()
 
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
-    """Вход в админ-панель"""
+    """Вход в админ-панель по команде /admin"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Доступ запрещён")
         return
     
+    admin_kb = await get_admin_keyboard(message.from_user.id)
+    
     await message.answer(
         "⚙️ <b>Админ-панель</b>\n\n"
-        "Выбери раздел:",
+        "Выбери раздел управления:",
         parse_mode="HTML",
-        reply_markup=await get_admin_keyboard(message.from_user.id)
+        reply_markup=admin_kb
     )
 
 
@@ -33,9 +35,9 @@ async def admin_actions(callback: types.CallbackQuery):
     
     action = callback.data.split("_")[1]
     
-    # Заказы
+    # === ЗАКАЗЫ ===
     if action == "orders":
-        transactions = await get_all_transactions()
+        transactions = await get_all_transactions(limit=20)
         if not transactions:
             await callback.message.answer("📦 Заказов пока нет")
             return
@@ -46,20 +48,35 @@ async def admin_actions(callback: types.CallbackQuery):
             text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{username}\n"
         await callback.message.answer(text, parse_mode="HTML")
     
-    # Статистика (только супер-админ)
-    elif action == "stats" and callback.from_user.id == SUPER_ADMIN_ID:
-        transactions = await get_all_transactions()
-        total = sum(t['amount'] for t in transactions)
-        count = len(transactions)
+    # === СТАТИСТИКА (только для супер-админа) ===
+    elif action == "stats":
+        if callback.from_user.id != SUPER_ADMIN_ID:
+            await callback.answer("❌ Только для супер-админа", show_alert=True)
+            return
+        
+        stats = await get_stats()
+        total_amount = stats['total_amount']
+        
+        # Расчёт распределения от общей суммы (без комиссии!)
+        lana_share = total_amount * PROFIT_SPLIT['lana']
+        admin_share = total_amount * PROFIT_SPLIT['admin']
+        dev_share = total_amount * PROFIT_SPLIT['development']
+        tax_share = total_amount * PROFIT_SPLIT['tax']
         
         await callback.message.answer(
-            f"📊 <b>Статистика</b>\n\n"
-            f"📦 Заказов: {count}\n"
-            f"💰 Оборот: {total}₽",
+            f"📊 <b>Полная статистика</b>\n\n"
+            f"📦 Заказов: {stats['total_orders']}\n"
+            f"💰 Общий оборот: {int(total_amount)}₽\n"
+            f"👥 Пользователей: {stats['total_users']}\n\n"
+            f"📈 <b>Распределение дохода:</b>\n"
+            f"👤 Лана (47%): {int(lana_share)}₽\n"
+            f"👤 Админ (28%): {int(admin_share)}₽\n"
+            f"🚀 Развитие (19%): {int(dev_share)}₽\n"
+            f"📋 Налог (6%): {int(tax_share)}₽",
             parse_mode="HTML"
         )
     
-    # Галерея (только менеджер или супер-админ)
+    # === ГАЛЕРЕЯ ===
     elif action == "gallery":
         await callback.message.answer(
             "📸 <b>Галерея фото</b>\n\n"
@@ -73,8 +90,9 @@ async def admin_actions(callback: types.CallbackQuery):
 
 @router.message(F.photo)
 async def handle_gallery_photo(message: types.Message):
-    """Обработка загрузки фото в галерею (только для менеджера)"""
-    if message.from_user.id not in [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]:
+    """Обработка загрузки фото в галерею (только для админов)"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Только для админов")
         return
     
     photo = message.photo[-1]
@@ -96,14 +114,46 @@ async def show_gallery(message: types.Message):
         await message.answer("❌ Доступ запрещён")
         return
     
-    photos = await get_gallery_photos()
+    photos = await get_gallery_photos(limit=10)
     if not photos:
         await message.answer("📸 Галерея пуста. Загрузи фото через админ-панель.")
         return
     
-    for photo_id, caption in photos[:5]:
+    await message.answer("📸 <b>Последние фото в галерее:</b>", parse_mode="HTML")
+    
+    for photo_id, caption, created_at in photos[:5]:
         await message.answer_photo(
             photo_id,
-            caption=caption if caption else "Фото из галереи",
+            caption=f"📅 {created_at}\n{caption if caption else 'без подписи'}",
             parse_mode="HTML"
         )
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    """Быстрая статистика (только для супер-админа)"""
+    if message.from_user.id != SUPER_ADMIN_ID:
+        await message.answer("❌ Только для супер-админа")
+        return
+    
+    stats = await get_stats()
+    total_amount = stats['total_amount']
+    
+    # Расчёт распределения
+    lana_share = total_amount * PROFIT_SPLIT['lana']
+    admin_share = total_amount * PROFIT_SPLIT['admin']
+    dev_share = total_amount * PROFIT_SPLIT['development']
+    tax_share = total_amount * PROFIT_SPLIT['tax']
+    
+    await message.answer(
+        f"📊 <b>Быстрая статистика</b>\n\n"
+        f"📦 Заказов: {stats['total_orders']}\n"
+        f"💰 Оборот: {int(total_amount)}₽\n"
+        f"👥 Пользователей: {stats['total_users']}\n\n"
+        f"📈 <b>Распределение:</b>\n"
+        f"👤 Лана: {int(lana_share)}₽\n"
+        f"👤 Админ: {int(admin_share)}₽\n"
+        f"🚀 Развитие: {int(dev_share)}₽\n"
+        f"📋 Налог: {int(tax_share)}₽",
+        parse_mode="HTML"
+    )
