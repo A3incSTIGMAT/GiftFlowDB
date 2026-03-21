@@ -29,13 +29,14 @@ async def get_main_menu_keyboard():
 
 
 async def get_gifts_keyboard():
-    """Клавиатура со списком подарков"""
+    """Клавиатура со списком подарков (с иконками)"""
     gifts = await get_all_gifts()
     builder = InlineKeyboardBuilder()
     
     for gift in gifts:
+        icon = gift.get('icon', '🎁')
         builder.button(
-            text=f"🎁 {gift['name']} | {gift['price']}₽",
+            text=f"{icon} {gift['name']} | {gift['price']}₽",
             callback_data=f"gift_{gift['id']}"
         )
     
@@ -85,6 +86,12 @@ async def get_admin_keyboard(user_id: int):
         InlineKeyboardButton(text="📦 Заказы", callback_data="admin_orders"),
         InlineKeyboardButton(text="📸 Галерея", callback_data="admin_gallery"),
         width=2
+    )
+    
+    # Кнопка "Добавить подарок" доступна всем админам
+    builder.row(
+        InlineKeyboardButton(text="🎁 Добавить подарок", callback_data="admin_add_gift"),
+        width=1
     )
     
     if user_id == SUPER_ADMIN_ID:
