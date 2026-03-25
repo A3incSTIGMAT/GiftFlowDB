@@ -1,7 +1,7 @@
 import logging
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, PROFIT_SPLIT, TWITCH_URL, INSTAGRAM_URL
+from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, PROFIT_SPLIT
 from database import (
     get_all_transactions, add_gallery_photo, get_gallery_photos,
     get_stats, add_gift
