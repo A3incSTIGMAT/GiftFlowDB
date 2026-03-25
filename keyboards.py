@@ -3,7 +3,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import TWITCH_URL, INSTAGRAM_URL
 from database import get_all_gifts
 
-
 async def get_main_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -21,7 +20,6 @@ async def get_main_menu_keyboard():
     )
     return builder.as_markup()
 
-
 async def get_gifts_keyboard():
     gifts = await get_all_gifts()
     builder = InlineKeyboardBuilder()
@@ -38,7 +36,6 @@ async def get_gifts_keyboard():
     builder.adjust(1)
     return builder.as_markup()
 
-
 async def get_gift_detail_keyboard(gift_id: int):
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -52,7 +49,6 @@ async def get_gift_detail_keyboard(gift_id: int):
     )
     return builder.as_markup()
 
-
 async def get_back_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="⬅️ Назад", callback_data="show_gifts")
@@ -60,10 +56,8 @@ async def get_back_keyboard():
     builder.adjust(1)
     return builder.as_markup()
 
-
 async def get_admin_keyboard(user_id: int):
     from config import SUPER_ADMIN_ID
-    
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="📦 Заказы", callback_data="admin_orders"),
@@ -80,7 +74,6 @@ async def get_admin_keyboard(user_id: int):
         width=1
     )
     return builder.as_markup()
-
 
 async def get_super_admin_choice_keyboard():
     builder = InlineKeyboardBuilder()
