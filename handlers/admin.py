@@ -126,7 +126,7 @@ async def admin_actions(callback: types.CallbackQuery):
     
     # === СОЗДАТЬ ПОСТ ===
     elif action == "create_post":
-        if callback.from_user.id not in [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]:
+        if callback.from_user.id not in ADMIN_IDS:
             await callback.answer("❌ Только для админов", show_alert=True)
             return
         
