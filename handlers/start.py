@@ -17,77 +17,47 @@ async def cmd_start(message: types.Message):
     """Обработчик команды /start"""
     try:
         user_id = message.from_user.id
-        logger.info(f"🔍 /start от пользователя {user_id}")
         
         user = await get_user(user_id)
         if not user:
             await add_user(user_id, message.from_user.username, message.from_user.first_name)
             logger.info(f"✅ Новый пользователь: {user_id}")
         
-        # Супер-админ (895844198) — показываем выбор режима
+        # Супер-админ — показываем выбор режима
         if user_id == SUPER_ADMIN_ID:
-            logger.info(f"👑 Супер-админ режим для {user_id}")
             super_admin_mode[user_id] = None
-            
             await message.answer(
-                f"👑 <b>Привет, Супер-админ {message.from_user.first_name}!</b>\n\n"
+                f"👑 <b>Привет, Супер-админ!</b>\n\n"
                 f"Выбери режим работы:\n\n"
                 f"👤 <b>Режим пользователя</b> — видишь бота как обычный зритель\n"
-                f"⚙️ <b>Админ-панель</b> — управление ботом, статистика, галерея\n\n"
-                f"💡 Используй команды /user или /admin для переключения",
+                f"⚙️ <b>Админ-панель</b> — управление ботом, статистика, галерея",
                 parse_mode="HTML",
                 reply_markup=await get_super_admin_choice_keyboard()
             )
-        
-        # Лана (838701177) — сразу в админ-панель
+        # Лана — сразу в админ-панель
         elif user_id == SUPPORT_ADMIN_ID:
-            logger.info(f"👤 Админ (Лана) режим для {user_id}")
-            
-            admin_kb = await get_admin_keyboard(user_id)
-            
             await message.answer(
                 f"👋 <b>Привет, {STREAMER_NAME}!</b>\n\n"
                 f"Управление ботом:\n\n"
                 f"📢 <b>Создать пост</b> — кнопка в админ-панели\n"
                 f"📦 <b>Заказы</b> — список ожидающих платежей\n"
-                f"📸 <b>Галерея</b> — фото для постов\n\n"
-                f"👇 Выбери действие:",
-                parse_mode="HTML",
-                reply_markup=admin_kb
-            )
-        
-        # Другие админы (если есть)
-        elif user_id in ADMIN_IDS:
-            logger.info(f"👤 Другой админ режим для {user_id}")
-            
-            await message.answer(
-                f"👋 <b>Привет, Админ!</b>\n\n"
-                f"Управление ботом {STREAMER_NAME}",
+                f"📸 <b>Галерея</b> — фото для постов",
                 parse_mode="HTML",
                 reply_markup=await get_admin_keyboard(user_id)
             )
-        
         # Обычный пользователь
         else:
-            logger.info(f"👤 Обычный пользователь режим для {user_id}")
-            
             await message.answer(
                 f"👋 <b>Привет, {message.from_user.first_name}!</b>\n\n"
                 f"🎮 Это бот стримерши <b>{STREAMER_NAME}</b>\n\n"
                 f"• Подписывайся на соцсети\n"
                 f"• Дари подарки — они появятся на стриме\n"
-                f"• Вопросы — пиши менеджеру\n\n"
-                f"👇 Выбери действие:",
+                f"• Вопросы — пиши менеджеру",
                 parse_mode="HTML",
                 reply_markup=await get_main_menu_keyboard()
             )
-            
     except Exception as e:
         logger.error(f"❌ Ошибка в /start: {e}")
-        await message.answer(
-            "❌ Произошла ошибка. Попробуй позже.",
-            parse_mode="HTML"
-        )
 
 
 @router.message(Command("user"))
@@ -96,13 +66,11 @@ async def cmd_user(message: types.Message):
     if message.from_user.id != SUPER_ADMIN_ID:
         await message.answer("❌ Доступ запрещён")
         return
-    
     super_admin_mode[message.from_user.id] = "user"
-    
     await message.answer(
-        f"👤 <b>Режим пользователя</b>\n\n"
-        f"Теперь ты видишь бота как обычный зритель.\n"
-        f"Чтобы вернуться в админ-панель, используй /admin",
+        "👤 <b>Режим пользователя</b>\n\n"
+        "Теперь ты видишь бота как обычный зритель.\n"
+        "Чтобы вернуться в админ-панель, используй /admin",
         parse_mode="HTML",
         reply_markup=await get_main_menu_keyboard()
     )
@@ -114,10 +82,6 @@ async def cmd_admin(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Доступ запрещён")
         return
-    
-    if message.from_user.id == SUPER_ADMIN_ID:
-        super_admin_mode[message.from_user.id] = "admin"
-    
     await message.answer(
         "⚙️ <b>Админ-панель</b>\n\n"
         "Выбери раздел управления:",
@@ -128,17 +92,12 @@ async def cmd_admin(message: types.Message):
 
 @router.callback_query(F.data == "mode_user")
 async def mode_user(callback: types.CallbackQuery):
-    """Переключение в режим пользователя (через кнопку)"""
     if callback.from_user.id != SUPER_ADMIN_ID:
         await callback.answer("❌ Доступ запрещён")
         return
-    
     super_admin_mode[callback.from_user.id] = "user"
-    
     await callback.message.edit_text(
-        f"👤 <b>Режим пользователя</b>\n\n"
-        f"Теперь ты видишь бота как обычный зритель.\n"
-        f"Чтобы вернуться в админ-панель, используй /admin или нажми кнопку ниже.",
+        "👤 <b>Режим пользователя</b>",
         parse_mode="HTML",
         reply_markup=await get_main_menu_keyboard()
     )
@@ -147,17 +106,11 @@ async def mode_user(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "mode_admin")
 async def mode_admin(callback: types.CallbackQuery):
-    """Переключение в режим админа (через кнопку)"""
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("❌ Доступ запрещён")
         return
-    
-    if callback.from_user.id == SUPER_ADMIN_ID:
-        super_admin_mode[callback.from_user.id] = "admin"
-    
     await callback.message.edit_text(
-        "⚙️ <b>Админ-панель</b>\n\n"
-        "Выбери раздел управления:",
+        "⚙️ <b>Админ-панель</b>",
         parse_mode="HTML",
         reply_markup=await get_admin_keyboard(callback.from_user.id)
     )
@@ -166,94 +119,41 @@ async def mode_admin(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery):
-    """Возврат в главное меню (в зависимости от режима)"""
     try:
-        current_text = callback.message.text or ""
         user_id = callback.from_user.id
-        
-        # Супер-админ
         if user_id == SUPER_ADMIN_ID:
             if super_admin_mode.get(user_id) == "user":
-                if "Главное меню" in current_text or "Выбери действие" in current_text:
-                    await callback.answer("🔹 Вы уже в главном меню")
-                    return
-                
                 await callback.message.edit_text(
                     "👋 <b>Главное меню</b>",
                     parse_mode="HTML",
                     reply_markup=await get_main_menu_keyboard()
                 )
             else:
-                if "Выбери режим" in current_text:
-                    await callback.answer("🔹 Вы уже в меню выбора")
-                    return
-                
                 await callback.message.edit_text(
-                    f"👑 <b>Супер-админ!</b>\n\n"
-                    f"Выбери режим работы:\n\n"
-                    f"👤 <b>Режим пользователя</b> — видишь бота как обычный зритель\n"
-                    f"⚙️ <b>Админ-панель</b> — управление ботом, статистика, галерея",
+                    "👑 <b>Супер-админ!</b>\n\nВыбери режим работы:",
                     parse_mode="HTML",
                     reply_markup=await get_super_admin_choice_keyboard()
                 )
-        
-        # Лана
-        elif user_id == SUPPORT_ADMIN_ID:
-            if "Админ-панель" in current_text:
-                await callback.answer("🔹 Вы уже в админ-панели")
-                return
-            
-            await callback.message.edit_text(
-                "⚙️ <b>Админ-панель</b>\n\n"
-                "Выбери раздел управления:",
-                parse_mode="HTML",
-                reply_markup=await get_admin_keyboard(user_id)
-            )
-        
-        # Другие админы
         elif user_id in ADMIN_IDS:
-            if "Админ-панель" in current_text:
-                await callback.answer("🔹 Вы уже в админ-панели")
-                return
-            
             await callback.message.edit_text(
                 "⚙️ <b>Админ-панель</b>",
                 parse_mode="HTML",
                 reply_markup=await get_admin_keyboard(user_id)
             )
-        
-        # Обычный пользователь
         else:
-            if "Главное меню" in current_text or "Выбери действие" in current_text:
-                await callback.answer("🔹 Вы уже в главном меню")
-                return
-            
             await callback.message.edit_text(
                 "👋 <b>Главное меню</b>",
                 parse_mode="HTML",
                 reply_markup=await get_main_menu_keyboard()
             )
-        
         await callback.answer()
-        
     except Exception as e:
-        error_str = str(e)
-        if "message is not modified" in error_str:
-            await callback.answer("🔹 Вы уже здесь")
-        else:
-            logger.error(f"Ошибка в back_to_main: {e}")
+        logger.error(f"Ошибка в back_to_main: {e}")
 
 
 @router.callback_query(F.data == "contact_support")
 async def contact_support(callback: types.CallbackQuery):
-    """Связь с поддержкой"""
     try:
-        current_text = callback.message.text or ""
-        
-        if "Связь с менеджером" in current_text:
-            await callback.answer("🔹 Вы уже в разделе поддержки")
-            return
-        
         await callback.message.edit_text(
             "💬 <b>Связь с менеджером</b>\n\n"
             "Просто напиши сюда свой вопрос — менеджер ответит в ближайшее время.",
@@ -261,22 +161,14 @@ async def contact_support(callback: types.CallbackQuery):
             reply_markup=await get_back_keyboard()
         )
         await callback.answer()
-        
     except Exception as e:
-        error_str = str(e)
-        if "message is not modified" in error_str:
-            await callback.answer("🔹 Вы уже в разделе поддержки")
-        else:
-            logger.error(f"Ошибка в contact_support: {e}")
+        logger.error(f"Ошибка в contact_support: {e}")
 
 
 @router.message(Command("test"))
 async def cmd_test(message: types.Message):
-    """Тестовая команда"""
     await message.answer(
         "✅ <b>Бот работает!</b>\n\n"
-        f"🆔 Твой ID: <code>{message.from_user.id}</code>\n\n"
-        f"📊 <b>Твой статус:</b>\n"
-        f"{'👑 Супер-админ' if message.from_user.id == SUPER_ADMIN_ID else '👤 Админ' if message.from_user.id in ADMIN_IDS else '👤 Пользователь'}",
+        f"🆔 Твой ID: <code>{message.from_user.id}</code>",
         parse_mode="HTML"
     )
