@@ -40,7 +40,6 @@ async def admin_callback(callback: types.CallbackQuery):
 
     action = callback.data.split("_", 1)[1]
 
-    # -------------------- ЗАКАЗЫ --------------------
     if action == "orders":
         txns = await get_all_transactions(limit=20)
         if not txns:
@@ -51,7 +50,6 @@ async def admin_callback(callback: types.CallbackQuery):
             text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{t.get('username', 'нет')}\n"
         await callback.message.answer(text, parse_mode="HTML")
 
-    # -------------------- СТАТИСТИКА --------------------
     elif action == "stats":
         if user_id != SUPER_ADMIN_ID:
             await callback.answer("❌ Только супер-админ", show_alert=True)
@@ -65,7 +63,6 @@ async def admin_callback(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    # -------------------- ГАЛЕРЕЯ --------------------
     elif action == "gallery":
         await callback.message.answer(
             "📸 <b>Галерея</b>\n\n"
@@ -74,7 +71,6 @@ async def admin_callback(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    # -------------------- ДОБАВИТЬ ПОДАРОК --------------------
     elif action == "add_gift":
         if user_id not in (SUPER_ADMIN_ID, SUPPORT_ADMIN_ID):
             await callback.answer("❌ Только админы", show_alert=True)
@@ -88,7 +84,6 @@ async def admin_callback(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    # -------------------- СОЗДАТЬ ПОСТ --------------------
     elif action == "create_post":
         waiting_for_post[user_id] = {"step": "text"}
         await callback.message.answer(
@@ -99,6 +94,28 @@ async def admin_callback(callback: types.CallbackQuery):
         )
 
     await callback.answer()
+
+
+# ============================================================
+# СОЗДАНИЕ ПОСТА — ПОЛУЧЕНИЕ ТЕКСТА (ВАЖНО: ПЕРВЫЙ ОБРАБОТЧИК ТЕКСТА)
+# ============================================================
+@router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
+async def post_text(message: types.Message):
+    # Если есть активный процесс добавления подарка — не трогаем
+    if waiting_for_gift.get(message.from_user.id):
+        return
+
+    state = waiting_for_post.get(message.from_user.id)
+    if not state or state.get("step") != "text":
+        return
+
+    waiting_for_post[message.from_user.id] = {"step": "photo", "text": message.text}
+    await message.answer(
+        "📢 <b>Создание поста — Шаг 2/2</b>\n\n"
+        "📸 Отправь фото (или /skip)\n\n"
+        "❌ Отмена: /cancel",
+        parse_mode="HTML"
+    )
 
 
 # ============================================================
@@ -123,23 +140,6 @@ async def add_gift_text(message: types.Message):
         await message.answer(f"❌ Ошибка: {e}")
     finally:
         waiting_for_gift.pop(message.from_user.id, None)
-
-
-# ============================================================
-# СОЗДАНИЕ ПОСТА — ПОЛУЧЕНИЕ ТЕКСТА
-# ============================================================
-@router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
-async def post_text(message: types.Message):
-    state = waiting_for_post.get(message.from_user.id)
-    if not state or state.get("step") != "text":
-        return
-    waiting_for_post[message.from_user.id] = {"step": "photo", "text": message.text}
-    await message.answer(
-        "📢 <b>Создание поста — Шаг 2/2</b>\n\n"
-        "📸 Отправь фото (или /skip)\n\n"
-        "❌ Отмена: /cancel",
-        parse_mode="HTML"
-    )
 
 
 # ============================================================
