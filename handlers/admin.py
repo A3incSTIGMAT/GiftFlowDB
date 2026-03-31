@@ -1,7 +1,7 @@
 import logging
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, TWITCH_URL, INSTAGRAM_URL
+from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, TWITCH_URL, INSTAGRAM_URL, CHANNEL_ID
 from database import get_all_transactions, get_stats, add_gift, add_gallery_photo, get_gallery_photos
 from keyboards import get_admin_keyboard
 
@@ -82,7 +82,7 @@ async def admin_callback(callback: types.CallbackQuery):
     elif action == "create_post":
         waiting_for_post[user_id] = {"step": "text"}
         await callback.message.answer(
-            "📢 <b>Создание поста — Шаг 1/2</b>\n\n"
+            "📢 <b>Создание поста — Шаг 1/3</b>\n\n"
             "✏️ Напиши текст поста\n\n"
             "❌ Отмена: /cancel",
             parse_mode="HTML"
@@ -103,7 +103,7 @@ async def post_text(message: types.Message):
 
     waiting_for_post[message.from_user.id] = {"step": "photo", "text": message.text}
     await message.answer(
-        "📢 <b>Создание поста — Шаг 2/2</b>\n\n"
+        "📢 <b>Создание поста — Шаг 2/3</b>\n\n"
         "📸 Отправь фото (или /skip)\n\n"
         "❌ Отмена: /cancel",
         parse_mode="HTML"
@@ -138,8 +138,8 @@ async def skip_photo(message: types.Message):
     state = waiting_for_post.get(message.from_user.id)
     if not state or state.get("step") != "photo":
         return
-    await finish_post(message, state["text"], None)
-    waiting_for_post.pop(message.from_user.id, None)
+    waiting_for_post[message.from_user.id] = {"step": "confirm", "text": state["text"], "photo_id": None}
+    await show_confirm(message, state["text"], None)
 
 
 # ========== ФОТО ДЛЯ ПОСТА ==========
@@ -149,35 +149,72 @@ async def post_photo(message: types.Message):
     if not state or state.get("step") != "photo":
         return
     photo = message.photo[-1]
-    await finish_post(message, state["text"], photo.file_id)
-    waiting_for_post.pop(message.from_user.id, None)
+    waiting_for_post[message.from_user.id] = {"step": "confirm", "text": state["text"], "photo_id": photo.file_id}
+    await show_confirm(message, state["text"], photo.file_id)
 
 
-# ========== ФОРМИРОВАНИЕ ПОСТА ==========
-async def finish_post(message: types.Message, text: str, photo_id: str = None):
+# ========== ПОДТВЕРЖДЕНИЕ ПУБЛИКАЦИИ ==========
+async def show_confirm(message: types.Message, text: str, photo_id: str = None):
+    preview = f"📢 <b>Предпросмотр поста:</b>\n\n{text[:200]}..."
+    if photo_id:
+        await message.answer_photo(photo_id, caption=preview, parse_mode="HTML")
+    else:
+        await message.answer(preview, parse_mode="HTML")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Опубликовать", callback_data="confirm_publish")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_publish")]
+    ])
+    await message.answer("Опубликовать пост в канале?", reply_markup=kb)
+
+
+@router.callback_query(F.data == "confirm_publish")
+async def confirm_publish(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    state = waiting_for_post.get(user_id)
+    if not state or state.get("step") != "confirm":
+        await callback.answer("❌ Нет поста для публикации")
+        return
+
+    text = state["text"]
+    photo_id = state.get("photo_id")
+
     post_text = (
         f"{text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📺 <b>Twitch</b>: {TWITCH_URL}\n"
         f"📷 <b>Instagram</b>: {INSTAGRAM_URL}\n"
-        f"🎁 <b>Подарки</b>: @{message.bot.username}\n\n"
-        "🔘 <b>Как добавить кнопки (вручную при публикации в канале):</b>\n"
-        f"• Twitch → {TWITCH_URL}\n"
-        f"• Instagram → {INSTAGRAM_URL}\n"
-        f"• Подарки → https://t.me/{message.bot.username}?start"
+        f"🎁 <b>Подарки</b>: @{callback.bot.username}"
     )
 
-    if photo_id:
-        await message.answer_photo(photo_id, caption=post_text, parse_mode="HTML")
-    else:
-        await message.answer(post_text, parse_mode="HTML")
+    try:
+        if photo_id:
+            await callback.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=photo_id,
+                caption=post_text,
+                parse_mode="HTML"
+            )
+        else:
+            await callback.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=post_text,
+                parse_mode="HTML"
+            )
+        await callback.message.answer("✅ Пост опубликован в канале!")
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка публикации: {e}")
+    finally:
+        waiting_for_post.pop(user_id, None)
+    await callback.answer()
 
-    await message.answer(
-        "✅ <b>Готово!</b>\n\n"
-        "📋 Скопируй текст выше\n"
-        "🔘 Добавь кнопки по инструкции\n"
-        "📢 Вставь в канал и нажми «Отправить»",
-        parse_mode="HTML"
-    )
+
+@router.callback_query(F.data == "cancel_publish")
+async def cancel_publish(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id in waiting_for_post:
+        waiting_for_post.pop(user_id)
+    await callback.message.answer("❌ Публикация отменена")
+    await callback.answer()
 
 
 # ========== ГАЛЕРЕЯ ==========
@@ -185,7 +222,7 @@ async def finish_post(message: types.Message, text: str, photo_id: str = None):
 async def save_gallery_photo(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-    if waiting_for_post.get(message.from_user.id, {}).get("step") == "photo":
+    if waiting_for_post.get(message.from_user.id, {}).get("step") in ("photo", "confirm"):
         return
     photo = message.photo[-1]
     await add_gallery_photo(photo.file_id, message.caption or "", message.from_user.id)
@@ -222,7 +259,7 @@ async def stats_command(message: types.Message):
     )
 
 
-# ========== /cancel (РАБОТАЕТ ВСЕГДА) ==========
+# ========== /cancel ==========
 @router.message(Command("cancel"))
 async def cancel_action(message: types.Message):
     if message.from_user.id in waiting_for_gift:
