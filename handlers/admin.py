@@ -14,6 +14,21 @@ waiting_for_gift = {}
 waiting_for_post = {}
 
 
+# ========== УНИВЕРСАЛЬНАЯ ОТМЕНА ==========
+def clear_state(user_id: int):
+    """Очищает состояние пользователя"""
+    if user_id in waiting_for_gift:
+        waiting_for_gift.pop(user_id)
+    if user_id in waiting_for_post:
+        waiting_for_post.pop(user_id)
+
+
+@router.message(Command("cancel"))
+async def cancel_action(message: types.Message):
+    clear_state(message.from_user.id)
+    await message.answer("❌ Действие отменено")
+
+
 # ========== АДМИН-ПАНЕЛЬ ==========
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
@@ -27,7 +42,7 @@ async def cmd_admin(message: types.Message):
     )
 
 
-# ========== ОБРАБОТКА КНОПОК ==========
+# ========== ОБРАБОТКА КНОПОК АДМИНКИ ==========
 @router.callback_query(F.data.startswith("admin_"))
 async def admin_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -82,6 +97,7 @@ async def admin_callback(callback: types.CallbackQuery):
         )
 
     elif action == "create_post":
+        clear_state(user_id)
         waiting_for_post[user_id] = {"step": "text"}
         await callback.message.answer(
             "📢 <b>Создание поста — Шаг 1/4</b>\n\n"
@@ -93,7 +109,30 @@ async def admin_callback(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ========== ШАГ 1: ТЕКСТ ==========
+# ========== ДОБАВЛЕНИЕ ПОДАРКА ==========
+@router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
+async def add_gift_text(message: types.Message):
+    if not waiting_for_gift.get(message.from_user.id):
+        return
+    try:
+        parts = message.text.split("|")
+        if len(parts) < 3:
+            await message.answer("❌ Ошибка. Нужно: <code>Название | Цена | Описание | Иконка</code>", parse_mode="HTML")
+            return
+        name = parts[0].strip()
+        price = int(parts[1].strip())
+        desc = parts[2].strip()
+        icon = parts[3].strip() if len(parts) > 3 else "🎁"
+        await add_gift(name, price, desc, icon)
+        await message.answer(f"✅ Подарок <b>{name}</b> добавлен!", parse_mode="HTML")
+        clear_state(message.from_user.id)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+    finally:
+        waiting_for_gift.pop(message.from_user.id, None)
+
+
+# ========== СОЗДАНИЕ ПОСТА — ШАГ 1: ТЕКСТ ==========
 @router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
 async def post_text(message: types.Message):
     if waiting_for_gift.get(message.from_user.id):
@@ -112,29 +151,7 @@ async def post_text(message: types.Message):
     )
 
 
-# ========== ДОБАВЛЕНИЕ ПОДАРКА (ТЕКСТ) ==========
-@router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
-async def add_gift_text(message: types.Message):
-    if not waiting_for_gift.get(message.from_user.id):
-        return
-    try:
-        parts = message.text.split("|")
-        if len(parts) < 3:
-            await message.answer("❌ Ошибка. Нужно: <code>Название | Цена | Описание | Иконка</code>", parse_mode="HTML")
-            return
-        name = parts[0].strip()
-        price = int(parts[1].strip())
-        desc = parts[2].strip()
-        icon = parts[3].strip() if len(parts) > 3 else "🎁"
-        await add_gift(name, price, desc, icon)
-        await message.answer(f"✅ Подарок <b>{name}</b> добавлен!", parse_mode="HTML")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-    finally:
-        waiting_for_gift.pop(message.from_user.id, None)
-
-
-# ========== ШАГ 2: ФОТО (ИЛИ /skip) ==========
+# ========== ШАГ 2: ФОТО ИЛИ ПРОПУСК ==========
 @router.message(Command("skip"))
 async def skip_photo(message: types.Message):
     state = waiting_for_post.get(message.from_user.id)
@@ -176,12 +193,8 @@ async def publish_post(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     state = waiting_for_post.get(user_id)
 
-    if not state:
-        await callback.answer("❌ Пост не найден. Начни создание заново.", show_alert=True)
-        return
-
-    if state.get("step") != "preview":
-        await callback.answer("❌ Пост не готов к публикации", show_alert=True)
+    if not state or state.get("step") != "preview":
+        await callback.answer("❌ Нет поста для публикации", show_alert=True)
         return
 
     text = state["text"]
@@ -209,7 +222,7 @@ async def publish_post(callback: types.CallbackQuery):
                 parse_mode="HTML"
             )
         await callback.message.answer("✅ Пост опубликован в канале!")
-        waiting_for_post.pop(user_id, None)
+        clear_state(user_id)
     except Exception as e:
         await callback.message.answer(f"❌ Ошибка публикации: {e}")
     await callback.answer()
@@ -234,28 +247,14 @@ async def edit_post_text(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ========== ОТМЕНА (УДАЛЯЕТ ВСЁ) ==========
+# ========== ОТМЕНА (КНОПКА) ==========
 @router.callback_query(F.data == "post_cancel")
-async def cancel_post(callback: types.CallbackQuery):
+async def cancel_post_button(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    if user_id in waiting_for_post:
-        waiting_for_post.pop(user_id)
+    clear_state(user_id)
     await callback.message.answer("❌ Создание поста отменено")
     await callback.message.delete()
     await callback.answer()
-
-
-@router.message(Command("cancel"))
-async def cancel_action(message: types.Message):
-    user_id = message.from_user.id
-    if user_id in waiting_for_gift:
-        waiting_for_gift.pop(user_id)
-        await message.answer("❌ Добавление подарка отменено")
-    elif user_id in waiting_for_post:
-        waiting_for_post.pop(user_id)
-        await message.answer("❌ Создание поста отменено")
-    else:
-        await message.answer("❌ Нет активных действий")
 
 
 # ========== ГАЛЕРЕЯ ==========
