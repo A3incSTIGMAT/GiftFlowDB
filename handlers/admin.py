@@ -170,7 +170,7 @@ async def show_preview(message: types.Message, text: str, photo_id: str = None):
     await message.answer("Что делаем дальше?", reply_markup=kb)
 
 
-# ========== ШАГ 4: ПУБЛИКАЦИЯ / РЕДАКТИРОВАНИЕ / ОТМЕНА ==========
+# ========== ШАГ 4: ПУБЛИКАЦИЯ ==========
 @router.callback_query(F.data == "post_publish")
 async def publish_post(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -215,6 +215,7 @@ async def publish_post(callback: types.CallbackQuery):
     await callback.answer()
 
 
+# ========== РЕДАКТИРОВАНИЕ ==========
 @router.callback_query(F.data == "post_edit_text")
 async def edit_post_text(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -233,13 +234,28 @@ async def edit_post_text(callback: types.CallbackQuery):
     await callback.answer()
 
 
+# ========== ОТМЕНА (УДАЛЯЕТ ВСЁ) ==========
 @router.callback_query(F.data == "post_cancel")
 async def cancel_post(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if user_id in waiting_for_post:
         waiting_for_post.pop(user_id)
     await callback.message.answer("❌ Создание поста отменено")
+    await callback.message.delete()
     await callback.answer()
+
+
+@router.message(Command("cancel"))
+async def cancel_action(message: types.Message):
+    user_id = message.from_user.id
+    if user_id in waiting_for_gift:
+        waiting_for_gift.pop(user_id)
+        await message.answer("❌ Добавление подарка отменено")
+    elif user_id in waiting_for_post:
+        waiting_for_post.pop(user_id)
+        await message.answer("❌ Создание поста отменено")
+    else:
+        await message.answer("❌ Нет активных действий")
 
 
 # ========== ГАЛЕРЕЯ ==========
@@ -282,16 +298,3 @@ async def stats_command(message: types.Message):
         f"👥 Пользователей: {stats['total_users']}",
         parse_mode="HTML"
     )
-
-
-# ========== /cancel ==========
-@router.message(Command("cancel"))
-async def cancel_action(message: types.Message):
-    if message.from_user.id in waiting_for_gift:
-        waiting_for_gift.pop(message.from_user.id)
-        await message.answer("❌ Добавление подарка отменено")
-    elif message.from_user.id in waiting_for_post:
-        waiting_for_post.pop(message.from_user.id)
-        await message.answer("❌ Создание поста отменено")
-    else:
-        await message.answer("❌ Нет активных действий")
