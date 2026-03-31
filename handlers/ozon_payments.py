@@ -25,8 +25,10 @@ def set_bot(bot_instance: Bot):
 
 # ========== КОНФИГУРАЦИЯ (ТВОИ ДАННЫЕ) ==========
 OZON_CARD_LAST4 = "4436"                    # Последние 4 цифры карты
+OZON_CARD_FULL = "2204 3210 4743 4436"      # Полный номер карты (для копирования)
 OZON_BANK_NAME = "Озон Банк"                # Название банка
 OZON_RECEIVER = "Александр Б."              # Получатель
+OZON_PHONE = "+7 995 253-89-15"             # Номер телефона для СБП
 OZON_SBP_QR_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019d2edd-64d5-7781-87ea-fea6bf40d6cf"  # Твоя ссылка
 
 
@@ -63,24 +65,40 @@ def get_payment_menu(order_id: str, amount: int, gift_name: str) -> InlineKeyboa
 
 
 def get_requisites_text(order_id: str, amount: int, gift_name: str) -> str:
-    """Текст с реквизитами для перевода"""
+    """Текст с реквизитами для перевода (с моноширным шрифтом и СБП)"""
     return f"""
 💳 <b>Реквизиты для перевода</b>
 
+📱 <b>СБП (по номеру телефона):</b>
+   <code>{OZON_PHONE}</code>
+
+💳 <b>По номеру карты:</b>
+   <code>{OZON_CARD_FULL}</code>
+
 🏦 <b>Банк:</b> {OZON_BANK_NAME}
-💳 <b>Карта:</b> •••• {OZON_CARD_LAST4}
 👤 <b>Получатель:</b> {OZON_RECEIVER}
-💰 <b>Сумма:</b> {amount} ₽
+💰 <b>Сумма:</b> <code>{amount} ₽</code>
 
 🎁 <b>Подарок:</b> {gift_name}
-📝 <b>Номер заказа:</b> {order_id}
+📝 <b>Номер заказа:</b> <code>{order_id}</code>
 
 💡 <b>Как оплатить:</b>
-1. Переведите указанную сумму на карту
-2. В назначении платежа укажите номер заказа
-3. Нажмите кнопку <b>"Я оплатил(а)"</b>
+<b>СПОСОБ 1 — СБП по номеру телефона:</b>
+1️⃣ В приложении банка выберите «Перевод по номеру телефона»
+2️⃣ Введите номер <code>{OZON_PHONE}</code>
+3️⃣ Укажите сумму <code>{amount} ₽</code>
+4️⃣ В назначении платежа укажите <code>{order_id}</code>
 
-⚠️ После оплаты обязательно нажмите кнопку подтверждения!
+<b>СПОСОБ 2 — Перевод по номеру карты:</b>
+1️⃣ В приложении банка выберите «Перевод по номеру карты»
+2️⃣ Введите номер <code>{OZON_CARD_FULL}</code>
+3️⃣ Укажите сумму <code>{amount} ₽</code>
+4️⃣ В назначении платежа укажите <code>{order_id}</code>
+
+<b>СПОСОБ 3 — QR-код (СБП):</b>
+Нажмите кнопку «Оплатить по QR-коду» выше
+
+⚠️ После оплаты обязательно нажмите кнопку <b>"✅ Я оплатил(а)"</b>
 """
 
 
@@ -89,11 +107,16 @@ def get_requisites_only() -> str:
     return f"""
 💳 <b>Реквизиты для перевода</b>
 
+📱 <b>СБП (по номеру телефона):</b>
+   <code>{OZON_PHONE}</code>
+
+💳 <b>По номеру карты:</b>
+   <code>{OZON_CARD_FULL}</code>
+
 🏦 <b>Банк:</b> {OZON_BANK_NAME}
-💳 <b>Карта:</b> •••• {OZON_CARD_LAST4}
 👤 <b>Получатель:</b> {OZON_RECEIVER}
 
-📝 <b>Назначение платежа:</b> Укажите ваш Telegram ID и название подарка
+📝 <b>Назначение платежа:</b> <code>Ваш_Telegram_ID_или_ник</code>
 """
 
 
@@ -128,7 +151,7 @@ async def send_payment_message(message: Message, gift_id: int, gift_name: str, a
     await message.answer(
         f"🎁 <b>Оплата подарка: {gift_name}</b>\n\n"
         f"💰 Сумма: {amount} ₽\n"
-        f"📝 Номер заказа: {order_id}\n\n"
+        f"📝 Номер заказа: <code>{order_id}</code>\n\n"
         f"Выберите способ оплаты:",
         parse_mode="HTML",
         reply_markup=get_payment_menu(order_id, amount, gift_name)
@@ -218,14 +241,14 @@ async def payment_confirmed(callback: CallbackQuery):
                 f"🆔 ID: {payment['user_id']}\n"
                 f"🎁 Подарок: {payment['gift_name']}\n"
                 f"💰 Сумма: {amount} ₽\n"
-                f"📝 Заказ: {order_id}\n\n"
+                f"📝 Заказ: <code>{order_id}</code>\n\n"
                 f"📈 <b>Распределение:</b>\n"
                 f"👤 Лана (47%): {int(lana_share)}₽\n"
                 f"👤 Админ (28%): {int(admin_share)}₽\n"
                 f"🚀 Развитие (19%): {int(dev_share)}₽\n"
                 f"📋 Налог (6%): {int(tax_share)}₽\n\n"
-                f"✅ /approve_{order_id} — подтвердить и вручить подарок\n"
-                f"❌ /decline_{order_id} — отклонить",
+                f"✅ <code>/approve_{order_id}</code> — подтвердить и вручить подарок\n"
+                f"❌ <code>/decline_{order_id}</code> — отклонить",
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -235,7 +258,7 @@ async def payment_confirmed(callback: CallbackQuery):
         f"✅ <b>Заявка на оплату принята!</b>\n\n"
         f"🎁 Подарок: {payment['gift_name']}\n"
         f"💰 Сумма: {amount} ₽\n"
-        f"📝 Заказ: {order_id}\n\n"
+        f"📝 Заказ: <code>{order_id}</code>\n\n"
         f"⏳ Администратор проверит оплату в ближайшее время.\n"
         f"После подтверждения подарок будет вручён.",
         parse_mode="HTML",
@@ -291,7 +314,7 @@ async def approve_payment(message: Message):
             user_id,
             f"✅ <b>Подарок вручён!</b>\n\n"
             f"🎁 {gift_name}\n"
-            f"📝 Заказ: {order_id}\n\n"
+            f"📝 Заказ: <code>{order_id}</code>\n\n"
             f"Спасибо за поддержку! ❤️\n"
             f"Твой подарок уже у стримерши!",
             parse_mode="HTML"
@@ -330,7 +353,7 @@ async def decline_payment(message: Message):
             user_id,
             f"❌ <b>Оплата отклонена</b>\n\n"
             f"🎁 Подарок: {gift_name}\n"
-            f"📝 Заказ: {order_id}\n\n"
+            f"📝 Заказ: <code>{order_id}</code>\n\n"
             f"⚠️ Если вы оплатили, свяжитесь с администратором.",
             parse_mode="HTML"
         )
@@ -354,6 +377,6 @@ async def cmd_payments(message: Message):
     
     text = "📋 <b>Ожидающие платежи:</b>\n\n"
     for order_id, payment in pending_payments.items():
-        text += f"• {order_id} | {payment['username'] or payment['user_id']} | {payment['gift_name']} | {payment['amount']} ₽\n"
+        text += f"• <code>{order_id}</code> | {payment['username'] or payment['user_id']} | {payment['gift_name']} | {payment['amount']} ₽\n"
     
     await message.answer(text, parse_mode="HTML")
