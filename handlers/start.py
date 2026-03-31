@@ -3,12 +3,12 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from keyboards import get_main_menu_keyboard, get_back_keyboard, get_admin_keyboard, get_super_admin_choice_keyboard
 from database import get_user, add_user
-from config import ADMIN_IDS, SUPER_ADMIN_ID, STREAMER_NAME
+from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, STREAMER_NAME
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Хранилище режима для супер-админа (чтобы помнить, в каком режиме он находится)
+# Хранилище режима для супер-админа
 super_admin_mode = {}
 
 
@@ -20,12 +20,12 @@ async def cmd_start(message: types.Message):
         if not user:
             await add_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
             logger.info(f"Новый пользователь: {message.from_user.id}")
-        else:
-            logger.info(f"Существующий пользователь: {message.from_user.id}")
         
-        # Супер-админ — показываем выбор режима
+        logger.info(f"Пользователь {message.from_user.id} в ADMIN_IDS: {message.from_user.id in ADMIN_IDS}")
+        logger.info(f"ADMIN_IDS: {ADMIN_IDS}")
+        
+        # Супер-админ (895844198) — показываем выбор режима
         if message.from_user.id == SUPER_ADMIN_ID:
-            # Сбрасываем режим при новом старте
             super_admin_mode[message.from_user.id] = None
             
             await message.answer(
@@ -33,12 +33,25 @@ async def cmd_start(message: types.Message):
                 f"Выбери режим работы:\n\n"
                 f"👤 <b>Режим пользователя</b> — видишь бота как обычный зритель\n"
                 f"⚙️ <b>Админ-панель</b> — управление ботом, статистика, галерея\n\n"
-                f"💡 <b>Подсказка:</b> Используй команды /user или /admin для быстрого переключения",
+                f"💡 Используй команды /user или /admin для переключения",
                 parse_mode="HTML",
                 reply_markup=await get_super_admin_choice_keyboard()
             )
         
-        # Обычный админ (Лана) — сразу в админ-панель
+        # Обычный админ (Лана — 7076299389) — сразу в админ-панель
+        elif message.from_user.id == SUPPORT_ADMIN_ID:
+            await message.answer(
+                f"👋 <b>Привет, Админ!</b>\n\n"
+                f"Управление ботом {STREAMER_NAME}\n\n"
+                f"📢 <b>Создать пост</b> — кнопка в админ-панели\n"
+                f"📦 <b>Заказы</b> — список ожидающих платежей\n"
+                f"📸 <b>Галерея</b> — фото для постов\n\n"
+                f"👇 Выбери действие:",
+                parse_mode="HTML",
+                reply_markup=await get_admin_keyboard(message.from_user.id)
+            )
+        
+        # Другие админы (если есть)
         elif message.from_user.id in ADMIN_IDS:
             await message.answer(
                 f"👋 <b>Привет, Админ!</b>\n\n"
@@ -60,8 +73,6 @@ async def cmd_start(message: types.Message):
                 reply_markup=await get_main_menu_keyboard()
             )
             
-        logger.info(f"Команда /start выполнена для {message.from_user.id}")
-        
     except Exception as e:
         logger.error(f"Ошибка в /start: {e}")
         await message.answer(
@@ -150,9 +161,8 @@ async def back_to_main(callback: types.CallbackQuery):
     try:
         current_text = callback.message.text or ""
         
-        # Супер-админ — показываем меню выбора режима
+        # Супер-админ
         if callback.from_user.id == SUPER_ADMIN_ID:
-            # Если супер-админ в режиме пользователя — показываем главное меню
             if super_admin_mode.get(callback.from_user.id) == "user":
                 if "Главное меню" in current_text or "Выбери действие" in current_text:
                     await callback.answer("🔹 Вы уже в главном меню")
@@ -164,7 +174,6 @@ async def back_to_main(callback: types.CallbackQuery):
                     reply_markup=await get_main_menu_keyboard()
                 )
             else:
-                # Показываем выбор режима
                 if "Выбери режим" in current_text:
                     await callback.answer("🔹 Вы уже в меню выбора")
                     return
@@ -179,6 +188,19 @@ async def back_to_main(callback: types.CallbackQuery):
                 )
         
         # Обычный админ (Лана)
+        elif callback.from_user.id == SUPPORT_ADMIN_ID:
+            if "Админ-панель" in current_text:
+                await callback.answer("🔹 Вы уже в админ-панели")
+                return
+            
+            await callback.message.edit_text(
+                "⚙️ <b>Админ-панель</b>\n\n"
+                "Выбери раздел управления:",
+                parse_mode="HTML",
+                reply_markup=await get_admin_keyboard(callback.from_user.id)
+            )
+        
+        # Другие админы
         elif callback.from_user.id in ADMIN_IDS:
             if "Админ-панель" in current_text:
                 await callback.answer("🔹 Вы уже в админ-панели")
