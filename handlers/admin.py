@@ -8,14 +8,11 @@ from keyboards import get_admin_keyboard
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Хранилища состояний
 waiting_for_gift = {}
 waiting_for_post = {}
 
 
-# ============================================================
-# АДМИН-ПАНЕЛЬ
-# ============================================================
+# ========== АДМИН-ПАНЕЛЬ ==========
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -28,9 +25,7 @@ async def cmd_admin(message: types.Message):
     )
 
 
-# ============================================================
-# ОБРАБОТКА КНОПОК
-# ============================================================
+# ========== ОБРАБОТКА КНОПОК ==========
 @router.callback_query(F.data.startswith("admin_"))
 async def admin_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -96,12 +91,9 @@ async def admin_callback(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ============================================================
-# СОЗДАНИЕ ПОСТА — ПОЛУЧЕНИЕ ТЕКСТА (ВАЖНО: ПЕРВЫЙ ОБРАБОТЧИК ТЕКСТА)
-# ============================================================
+# ========== СОЗДАНИЕ ПОСТА — ТЕКСТ ==========
 @router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
 async def post_text(message: types.Message):
-    # Если есть активный процесс добавления подарка — не трогаем
     if waiting_for_gift.get(message.from_user.id):
         return
 
@@ -118,9 +110,7 @@ async def post_text(message: types.Message):
     )
 
 
-# ============================================================
-# ДОБАВЛЕНИЕ ПОДАРКА (ВВОД ТЕКСТА)
-# ============================================================
+# ========== ДОБАВЛЕНИЕ ПОДАРКА (ТЕКСТ) ==========
 @router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
 async def add_gift_text(message: types.Message):
     if not waiting_for_gift.get(message.from_user.id):
@@ -142,9 +132,7 @@ async def add_gift_text(message: types.Message):
         waiting_for_gift.pop(message.from_user.id, None)
 
 
-# ============================================================
-# ПРОПУСТИТЬ ФОТО
-# ============================================================
+# ========== /skip ==========
 @router.message(Command("skip"))
 async def skip_photo(message: types.Message):
     state = waiting_for_post.get(message.from_user.id)
@@ -154,9 +142,7 @@ async def skip_photo(message: types.Message):
     waiting_for_post.pop(message.from_user.id, None)
 
 
-# ============================================================
-# ПОЛУЧЕНИЕ ФОТО ДЛЯ ПОСТА
-# ============================================================
+# ========== ФОТО ДЛЯ ПОСТА ==========
 @router.message(F.photo & F.from_user.id.in_(ADMIN_IDS))
 async def post_photo(message: types.Message):
     state = waiting_for_post.get(message.from_user.id)
@@ -167,9 +153,7 @@ async def post_photo(message: types.Message):
     waiting_for_post.pop(message.from_user.id, None)
 
 
-# ============================================================
-# ФОРМИРОВАНИЕ ГОТОВОГО ПОСТА
-# ============================================================
+# ========== ФОРМИРОВАНИЕ ПОСТА ==========
 async def finish_post(message: types.Message, text: str, photo_id: str = None):
     post_text = (
         f"{text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -196,9 +180,7 @@ async def finish_post(message: types.Message, text: str, photo_id: str = None):
     )
 
 
-# ============================================================
-# ГАЛЕРЕЯ — СОХРАНЕНИЕ ФОТО
-# ============================================================
+# ========== ГАЛЕРЕЯ ==========
 @router.message(F.photo)
 async def save_gallery_photo(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -224,9 +206,7 @@ async def show_gallery(message: types.Message):
         await message.answer_photo(pid, caption=f"📅 {date}\n{caption or 'без подписи'}", parse_mode="HTML")
 
 
-# ============================================================
-# СТАТИСТИКА (КОМАНДА)
-# ============================================================
+# ========== СТАТИСТИКА ==========
 @router.message(Command("stats"))
 async def stats_command(message: types.Message):
     if message.from_user.id != SUPER_ADMIN_ID:
@@ -242,9 +222,7 @@ async def stats_command(message: types.Message):
     )
 
 
-# ============================================================
-# ОТМЕНА
-# ============================================================
+# ========== /cancel (РАБОТАЕТ ВСЕГДА) ==========
 @router.message(Command("cancel"))
 async def cancel_action(message: types.Message):
     if message.from_user.id in waiting_for_gift:
