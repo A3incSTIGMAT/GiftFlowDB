@@ -8,20 +8,17 @@ async def get_main_menu_keyboard():
     """Главное меню для обычных пользователей"""
     builder = InlineKeyboardBuilder()
     
-    # Ряд с соцсетями
     builder.row(
         InlineKeyboardButton(text="📺 Twitch", url=TWITCH_URL),
         InlineKeyboardButton(text="📷 Instagram", url=INSTAGRAM_URL),
         width=2
     )
     
-    # Кнопка каталога подарков
     builder.row(
         InlineKeyboardButton(text="🎁 Каталог подарков", callback_data="show_gifts"),
         width=1
     )
     
-    # Кнопка помощи
     builder.row(
         InlineKeyboardButton(text="💬 Помощь", callback_data="contact_support"),
         width=1
@@ -79,11 +76,12 @@ async def get_back_keyboard():
 
 
 async def get_admin_keyboard(user_id: int):
-    """Админ-панель (разная для супер-админа и менеджера)"""
+    """Админ-панель (для всех админов)"""
     from config import SUPER_ADMIN_ID
     
     builder = InlineKeyboardBuilder()
     
+    # Кнопки для всех админов
     builder.row(
         InlineKeyboardButton(text="📦 Заказы", callback_data="admin_orders"),
         InlineKeyboardButton(text="📸 Галерея", callback_data="admin_gallery"),
@@ -95,6 +93,7 @@ async def get_admin_keyboard(user_id: int):
         width=1
     )
     
+    # Статистика только для супер-админа
     if user_id == SUPER_ADMIN_ID:
         builder.row(
             InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
