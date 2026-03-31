@@ -55,6 +55,7 @@ async def admin_actions(callback: types.CallbackQuery):
         return
     
     action = callback.data.split("_")[1]
+    logger.info(f"🔍 Админ-действие: {action} от {callback.from_user.id}")
     
     # === ЗАКАЗЫ ===
     if action == "orders":
@@ -126,6 +127,8 @@ async def admin_actions(callback: types.CallbackQuery):
     
     # === СОЗДАТЬ ПОСТ ===
     elif action == "create_post":
+        logger.info(f"📢 Нажата кнопка 'Создать пост' от {callback.from_user.id}")
+        
         if callback.from_user.id not in ADMIN_IDS:
             await callback.answer("❌ Только для админов", show_alert=True)
             return
@@ -144,7 +147,7 @@ async def admin_actions(callback: types.CallbackQuery):
             "❌ Отмена: /cancel",
             parse_mode="HTML"
         )
-        await callback.answer()
+        await callback.answer("✅ Режим создания поста активирован")
     
     await callback.answer()
 
@@ -155,6 +158,8 @@ async def handle_add_gift(message: types.Message):
     """Обработка добавления подарка"""
     if not waiting_for_gift.get(message.from_user.id):
         return
+    
+    logger.info(f"🎁 Добавление подарка от {message.from_user.id}: {message.text}")
     
     try:
         parts = message.text.split("|")
@@ -208,6 +213,8 @@ async def handle_post_text(message: types.Message):
     if not post_data or post_data.get("stage") != "text":
         return
     
+    logger.info(f"📝 Получен текст поста от {message.from_user.id}")
+    
     # Сохраняем текст и переходим к шагу 2
     waiting_for_post[message.from_user.id] = {
         "stage": "photo",
@@ -237,6 +244,8 @@ async def skip_photo(message: types.Message):
         await message.answer("❌ Сейчас не тот этап. Сначала отправь текст поста.")
         return
     
+    logger.info(f"⏭️ Пропуск фото при создании поста от {message.from_user.id}")
+    
     text = post_data.get("text", "")
     
     # Публикуем пост без фото
@@ -256,6 +265,8 @@ async def handle_post_photo(message: types.Message):
         await message.answer("❌ Сначала отправь текст поста (Шаг 1).")
         return
     
+    logger.info(f"📸 Получено фото для поста от {message.from_user.id}")
+    
     photo = message.photo[-1]
     text = post_data.get("text", "")
     
@@ -273,6 +284,8 @@ async def publish_post(message: types.Message, text: str, photo_id: str = None):
             parse_mode="HTML"
         )
         return
+    
+    logger.info(f"📢 Публикация поста в канал {CHANNEL_ID}")
     
     # Формируем пост с ссылками
     post_text = f"{text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
