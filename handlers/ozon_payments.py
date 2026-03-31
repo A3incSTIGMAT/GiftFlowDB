@@ -23,11 +23,12 @@ def set_bot(bot_instance: Bot):
     bot = bot_instance
 
 
-# ========== КОНФИГУРАЦИЯ (ЗАМЕНИ НА СВОИ ДАННЫЕ) ==========
+# ========== КОНФИГУРАЦИЯ (ТВОИ ДАННЫЕ) ==========
 OZON_CARD_LAST4 = "4436"                    # Последние 4 цифры карты
 OZON_BANK_NAME = "Озон Банк"                # Название банка
 OZON_RECEIVER = "Александр Б."              # Получатель
-OZON_SBP_QR_URL = "https://finance.ozon.ru/apps/ваша_ссылка"  # Ссылка на QR-код
+OZON_SBP_QR_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019d2edd-64d5-7781-87ea-fea6bf40d6cf"  # Твоя ссылка
+
 
 # Хранилище ожидающих платежей
 pending_payments: Dict[str, dict] = {}
