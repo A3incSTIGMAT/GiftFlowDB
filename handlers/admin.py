@@ -1,6 +1,7 @@
 import logging
 from aiogram import Router, types, F
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, TWITCH_URL, INSTAGRAM_URL, CHANNEL_ID
 from database import get_all_transactions, get_stats, add_gift, add_gallery_photo, get_gallery_photos
 from keyboards import get_admin_keyboard
@@ -82,7 +83,7 @@ async def admin_callback(callback: types.CallbackQuery):
     elif action == "create_post":
         waiting_for_post[user_id] = {"step": "text"}
         await callback.message.answer(
-            "📢 <b>Создание поста — Шаг 1/3</b>\n\n"
+            "📢 <b>Создание поста — Шаг 1/4</b>\n\n"
             "✏️ Напиши текст поста\n\n"
             "❌ Отмена: /cancel",
             parse_mode="HTML"
@@ -91,7 +92,7 @@ async def admin_callback(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ========== СОЗДАНИЕ ПОСТА — ТЕКСТ ==========
+# ========== ШАГ 1: ТЕКСТ ==========
 @router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
 async def post_text(message: types.Message):
     if waiting_for_gift.get(message.from_user.id):
@@ -103,7 +104,7 @@ async def post_text(message: types.Message):
 
     waiting_for_post[message.from_user.id] = {"step": "photo", "text": message.text}
     await message.answer(
-        "📢 <b>Создание поста — Шаг 2/3</b>\n\n"
+        "📢 <b>Создание поста — Шаг 2/4</b>\n\n"
         "📸 Отправь фото (или /skip)\n\n"
         "❌ Отмена: /cancel",
         parse_mode="HTML"
@@ -132,47 +133,48 @@ async def add_gift_text(message: types.Message):
         waiting_for_gift.pop(message.from_user.id, None)
 
 
-# ========== /skip ==========
+# ========== ШАГ 2: ФОТО (ИЛИ /skip) ==========
 @router.message(Command("skip"))
 async def skip_photo(message: types.Message):
     state = waiting_for_post.get(message.from_user.id)
     if not state or state.get("step") != "photo":
         return
-    waiting_for_post[message.from_user.id] = {"step": "confirm", "text": state["text"], "photo_id": None}
-    await show_confirm(message, state["text"], None)
+    waiting_for_post[message.from_user.id] = {"step": "preview", "text": state["text"], "photo_id": None}
+    await show_preview(message, state["text"], None)
 
 
-# ========== ФОТО ДЛЯ ПОСТА ==========
 @router.message(F.photo & F.from_user.id.in_(ADMIN_IDS))
 async def post_photo(message: types.Message):
     state = waiting_for_post.get(message.from_user.id)
     if not state or state.get("step") != "photo":
         return
     photo = message.photo[-1]
-    waiting_for_post[message.from_user.id] = {"step": "confirm", "text": state["text"], "photo_id": photo.file_id}
-    await show_confirm(message, state["text"], photo.file_id)
+    waiting_for_post[message.from_user.id] = {"step": "preview", "text": state["text"], "photo_id": photo.file_id}
+    await show_preview(message, state["text"], photo.file_id)
 
 
-# ========== ПОДТВЕРЖДЕНИЕ ПУБЛИКАЦИИ ==========
-async def show_confirm(message: types.Message, text: str, photo_id: str = None):
-    preview = f"📢 <b>Предпросмотр поста:</b>\n\n{text[:200]}..."
+# ========== ШАГ 3: ПРЕДПРОСМОТР ==========
+async def show_preview(message: types.Message, text: str, photo_id: str = None):
+    preview_text = f"📢 <b>Предпросмотр поста:</b>\n\n{text[:300]}..."
     if photo_id:
-        await message.answer_photo(photo_id, caption=preview, parse_mode="HTML")
+        await message.answer_photo(photo_id, caption=preview_text, parse_mode="HTML")
     else:
-        await message.answer(preview, parse_mode="HTML")
+        await message.answer(preview_text, parse_mode="HTML")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Опубликовать", callback_data="confirm_publish")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_publish")]
+        [InlineKeyboardButton(text="✅ Опубликовать", callback_data="post_publish")],
+        [InlineKeyboardButton(text="✏️ Редактировать текст", callback_data="post_edit_text")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="post_cancel")]
     ])
-    await message.answer("Опубликовать пост в канале?", reply_markup=kb)
+    await message.answer("Что делаем дальше?", reply_markup=kb)
 
 
-@router.callback_query(F.data == "confirm_publish")
-async def confirm_publish(callback: types.CallbackQuery):
+# ========== ШАГ 4: ПУБЛИКАЦИЯ / РЕДАКТИРОВАНИЕ / ОТМЕНА ==========
+@router.callback_query(F.data == "post_publish")
+async def publish_post(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     state = waiting_for_post.get(user_id)
-    if not state or state.get("step") != "confirm":
+    if not state or state.get("step") != "preview":
         await callback.answer("❌ Нет поста для публикации")
         return
 
@@ -208,12 +210,30 @@ async def confirm_publish(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "cancel_publish")
-async def cancel_publish(callback: types.CallbackQuery):
+@router.callback_query(F.data == "post_edit_text")
+async def edit_post_text(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    state = waiting_for_post.get(user_id)
+    if not state:
+        await callback.answer("❌ Нет активного поста")
+        return
+
+    waiting_for_post[user_id] = {"step": "text", "text": state["text"]}
+    await callback.message.answer(
+        "✏️ <b>Редактирование текста</b>\n\n"
+        "Отправь новый текст поста\n\n"
+        "❌ Отмена: /cancel",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "post_cancel")
+async def cancel_post(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if user_id in waiting_for_post:
         waiting_for_post.pop(user_id)
-    await callback.message.answer("❌ Публикация отменена")
+    await callback.message.answer("❌ Создание поста отменено")
     await callback.answer()
 
 
@@ -222,7 +242,7 @@ async def cancel_publish(callback: types.CallbackQuery):
 async def save_gallery_photo(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-    if waiting_for_post.get(message.from_user.id, {}).get("step") in ("photo", "confirm"):
+    if waiting_for_post.get(message.from_user.id, {}).get("step") in ("photo", "preview"):
         return
     photo = message.photo[-1]
     await add_gallery_photo(photo.file_id, message.caption or "", message.from_user.id)
