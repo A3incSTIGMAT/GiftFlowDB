@@ -130,16 +130,21 @@ async def admin_actions(callback: types.CallbackQuery):
             await callback.answer("❌ Только для админов", show_alert=True)
             return
         
+        # Сохраняем состояние
         waiting_for_post[callback.from_user.id] = {"stage": "text"}
         
         await callback.message.answer(
-            "📢 <b>Создание поста</b>\n\n"
-            "Отправь текст поста (без ссылок, они добавятся автоматически):\n\n"
-            "💡 <b>Подсказка:</b> Текст может быть с эмодзи, форматированием.\n\n"
-            "После текста отправь фото (опционально).\n\n"
+            "📢 <b>Создание поста — Шаг 1 из 2</b>\n\n"
+            "✏️ <b>Напиши текст поста</b>\n\n"
+            "Текст может быть с эмодзи, с форматированием.\n"
+            "Ссылки на Twitch, Instagram и бот добавятся автоматически.\n\n"
+            "📝 <b>Пример:</b>\n"
+            "<i>Сегодня стрим в 20:00 по МСК! 🔥\n"
+            "Будем открывать кейсы и общаться!</i>\n\n"
             "❌ Отмена: /cancel",
             parse_mode="HTML"
         )
+        await callback.answer()
     
     await callback.answer()
 
@@ -195,50 +200,66 @@ async def handle_add_gift(message: types.Message):
         waiting_for_gift.pop(message.from_user.id, None)
 
 
-# === СОЗДАНИЕ ПОСТА ===
+# === СОЗДАНИЕ ПОСТА — ШАГ 1: ПОЛУЧЕНИЕ ТЕКСТА ===
 @router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
 async def handle_post_text(message: types.Message):
-    """Обработка текста поста"""
+    """Обработка текста поста (Шаг 1)"""
     post_data = waiting_for_post.get(message.from_user.id)
     if not post_data or post_data.get("stage") != "text":
         return
     
+    # Сохраняем текст и переходим к шагу 2
     waiting_for_post[message.from_user.id] = {
         "stage": "photo",
         "text": message.text
     }
     
     await message.answer(
+        "📢 <b>Создание поста — Шаг 2 из 2</b>\n\n"
         "📸 <b>Отправь фото для поста</b>\n\n"
-        "Отправь одно фото (или нажми /skip, чтобы пропустить).\n\n"
-        "❌ Отмена: /cancel",
+        "Фото можно отправить сейчас или пропустить этот шаг.\n\n"
+        "✅ <b>/skip</b> — пропустить фото (пост будет без фото)\n"
+        "❌ <b>/cancel</b> — отменить создание поста\n\n"
+        "💡 Если хочешь добавить фото — просто отправь его сейчас.",
         parse_mode="HTML"
     )
 
 
 @router.message(Command("skip"))
 async def skip_photo(message: types.Message):
-    """Пропустить фото"""
+    """Пропустить фото (Шаг 2)"""
     post_data = waiting_for_post.get(message.from_user.id)
     if not post_data:
+        await message.answer("❌ Нет активного процесса создания поста. Используй /admin → Создать пост")
+        return
+    
+    if post_data.get("stage") != "photo":
+        await message.answer("❌ Сейчас не тот этап. Сначала отправь текст поста.")
         return
     
     text = post_data.get("text", "")
     
+    # Публикуем пост без фото
     await publish_post(message, text, None)
     waiting_for_post.pop(message.from_user.id, None)
 
 
 @router.message(F.photo & F.from_user.id.in_(ADMIN_IDS))
 async def handle_post_photo(message: types.Message):
-    """Обработка фото для поста"""
+    """Обработка фото для поста (Шаг 2)"""
     post_data = waiting_for_post.get(message.from_user.id)
-    if not post_data or post_data.get("stage") != "photo":
+    if not post_data:
+        # Если нет активного процесса, просто добавляем фото в галерею
+        return
+    
+    if post_data.get("stage") != "photo":
+        await message.answer("❌ Сначала отправь текст поста (Шаг 1).")
         return
     
     photo = message.photo[-1]
     text = post_data.get("text", "")
     
+    # Публикуем пост с фото
     await publish_post(message, text, photo.file_id)
     waiting_for_post.pop(message.from_user.id, None)
 
@@ -247,7 +268,8 @@ async def publish_post(message: types.Message, text: str, photo_id: str = None):
     """Публикация поста в канал"""
     if not CHANNEL_ID:
         await message.answer(
-            "❌ Канал не настроен. Добавь переменную CHANNEL_ID в настройках Amvera.",
+            "❌ Канал не настроен. Добавь переменную CHANNEL_ID в настройках Amvera.\n\n"
+            "Пример: CHANNEL_ID = @lanatwitchh",
             parse_mode="HTML"
         )
         return
@@ -279,6 +301,12 @@ async def publish_post(message: types.Message, text: str, photo_id: str = None):
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
+            await message.answer(
+                f"✅ <b>Пост с фото опубликован в канале!</b>\n\n"
+                f"📢 Канал: {CHANNEL_ID}\n"
+                f"📝 Текст: {text[:100]}{'...' if len(text) > 100 else ''}",
+                parse_mode="HTML"
+            )
         else:
             await message.bot.send_message(
                 chat_id=CHANNEL_ID,
@@ -286,21 +314,30 @@ async def publish_post(message: types.Message, text: str, photo_id: str = None):
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
-        
-        await message.answer(
-            f"✅ <b>Пост опубликован в канале!</b>\n\n"
-            f"📢 Канал: {CHANNEL_ID}\n"
-            f"📝 Текст: {text[:100]}{'...' if len(text) > 100 else ''}",
-            parse_mode="HTML"
-        )
+            await message.answer(
+                f"✅ <b>Пост (без фото) опубликован в канале!</b>\n\n"
+                f"📢 Канал: {CHANNEL_ID}\n"
+                f"📝 Текст: {text[:100]}{'...' if len(text) > 100 else ''}",
+                parse_mode="HTML"
+            )
         
     except Exception as e:
         logger.error(f"Ошибка публикации поста: {e}")
-        await message.answer(
-            f"❌ Ошибка публикации: {e}\n\n"
-            f"Убедись, что бот добавлен в канал как администратор.",
-            parse_mode="HTML"
-        )
+        error_msg = str(e)
+        if "chat not found" in error_msg.lower():
+            await message.answer(
+                f"❌ Канал не найден. Убедись, что:\n\n"
+                f"1. Бот добавлен в канал {CHANNEL_ID} как администратор\n"
+                f"2. ID канала указан правильно\n\n"
+                f"Текущий CHANNEL_ID: <code>{CHANNEL_ID}</code>",
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer(
+                f"❌ Ошибка публикации: {error_msg[:200]}\n\n"
+                f"Убедись, что бот добавлен в канал как администратор.",
+                parse_mode="HTML"
+            )
 
 
 # === ГАЛЕРЕЯ ===
