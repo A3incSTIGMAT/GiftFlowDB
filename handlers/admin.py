@@ -175,8 +175,13 @@ async def show_preview(message: types.Message, text: str, photo_id: str = None):
 async def publish_post(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     state = waiting_for_post.get(user_id)
-    if not state or state.get("step") != "preview":
-        await callback.answer("❌ Нет поста для публикации")
+
+    if not state:
+        await callback.answer("❌ Пост не найден. Начни создание заново.", show_alert=True)
+        return
+
+    if state.get("step") != "preview":
+        await callback.answer("❌ Пост не готов к публикации", show_alert=True)
         return
 
     text = state["text"]
@@ -204,10 +209,9 @@ async def publish_post(callback: types.CallbackQuery):
                 parse_mode="HTML"
             )
         await callback.message.answer("✅ Пост опубликован в канале!")
+        waiting_for_post.pop(user_id, None)
     except Exception as e:
         await callback.message.answer(f"❌ Ошибка публикации: {e}")
-    finally:
-        waiting_for_post.pop(user_id, None)
     await callback.answer()
 
 
