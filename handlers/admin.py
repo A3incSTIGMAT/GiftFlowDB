@@ -55,7 +55,6 @@ async def admin_actions(callback: types.CallbackQuery):
         return
     
     action = callback.data.split("_")[1]
-    logger.info(f"🔍 Админ-действие: {action} от {callback.from_user.id}")
     
     # === ЗАКАЗЫ ===
     if action == "orders":
@@ -127,19 +126,16 @@ async def admin_actions(callback: types.CallbackQuery):
     
     # === СОЗДАТЬ ПОСТ ===
     elif action == "create_post":
-        logger.info(f"📢 Нажата кнопка 'Создать пост' от {callback.from_user.id}")
-        
         if callback.from_user.id not in ADMIN_IDS:
             await callback.answer("❌ Только для админов", show_alert=True)
             return
         
-        # Сохраняем состояние
         waiting_for_post[callback.from_user.id] = {"stage": "text"}
         
         await callback.message.answer(
             "📢 <b>Создание поста — Шаг 1 из 2</b>\n\n"
             "✏️ <b>Напиши текст поста</b>\n\n"
-            "Текст может быть с эмодзи, с форматированием.\n"
+            "Текст может быть с эмодзи и форматированием.\n"
             "Ссылки на Twitch, Instagram и бот добавятся автоматически.\n\n"
             "📝 <b>Пример:</b>\n"
             "<i>Сегодня стрим в 20:00 по МСК! 🔥\n"
@@ -147,7 +143,7 @@ async def admin_actions(callback: types.CallbackQuery):
             "❌ Отмена: /cancel",
             parse_mode="HTML"
         )
-        await callback.answer("✅ Режим создания поста активирован")
+        await callback.answer()
     
     await callback.answer()
 
@@ -158,8 +154,6 @@ async def handle_add_gift(message: types.Message):
     """Обработка добавления подарка"""
     if not waiting_for_gift.get(message.from_user.id):
         return
-    
-    logger.info(f"🎁 Добавление подарка от {message.from_user.id}: {message.text}")
     
     try:
         parts = message.text.split("|")
@@ -213,9 +207,6 @@ async def handle_post_text(message: types.Message):
     if not post_data or post_data.get("stage") != "text":
         return
     
-    logger.info(f"📝 Получен текст поста от {message.from_user.id}")
-    
-    # Сохраняем текст и переходим к шагу 2
     waiting_for_post[message.from_user.id] = {
         "stage": "photo",
         "text": message.text
@@ -244,12 +235,10 @@ async def skip_photo(message: types.Message):
         await message.answer("❌ Сейчас не тот этап. Сначала отправь текст поста.")
         return
     
-    logger.info(f"⏭️ Пропуск фото при создании поста от {message.from_user.id}")
-    
     text = post_data.get("text", "")
     
-    # Публикуем пост без фото
-    await publish_post(message, text, None)
+    # Показываем готовый пост для копирования
+    await show_ready_post(message, text, None)
     waiting_for_post.pop(message.from_user.id, None)
 
 
@@ -257,100 +246,67 @@ async def skip_photo(message: types.Message):
 async def handle_post_photo(message: types.Message):
     """Обработка фото для поста (Шаг 2)"""
     post_data = waiting_for_post.get(message.from_user.id)
-    if not post_data:
-        # Если нет активного процесса, просто добавляем фото в галерею
+    if not post_data or post_data.get("stage") != "photo":
         return
-    
-    if post_data.get("stage") != "photo":
-        await message.answer("❌ Сначала отправь текст поста (Шаг 1).")
-        return
-    
-    logger.info(f"📸 Получено фото для поста от {message.from_user.id}")
     
     photo = message.photo[-1]
     text = post_data.get("text", "")
     
-    # Публикуем пост с фото
-    await publish_post(message, text, photo.file_id)
+    # Показываем готовый пост для копирования
+    await show_ready_post(message, text, photo.file_id)
     waiting_for_post.pop(message.from_user.id, None)
 
 
-async def publish_post(message: types.Message, text: str, photo_id: str = None):
-    """Публикация поста в канал"""
-    if not CHANNEL_ID:
-        await message.answer(
-            "❌ Канал не настроен. Добавь переменную CHANNEL_ID в настройках Amvera.\n\n"
-            "Пример: CHANNEL_ID = @lanatwitchh",
-            parse_mode="HTML"
-        )
-        return
+async def show_ready_post(message: types.Message, text: str, photo_id: str = None):
+    """Показывает готовый пост для копирования"""
     
-    logger.info(f"📢 Публикация поста в канал {CHANNEL_ID}")
-    
-    # Формируем пост с ссылками
+    # Формируем текст поста с ссылками
     post_text = f"{text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
     post_text += f"📺 <b>Twitch:</b> {TWITCH_URL}\n"
     post_text += f"📷 <b>Instagram:</b> {INSTAGRAM_URL}\n"
     post_text += f"💳 <b>Поддержать:</b> /start\n\n"
     post_text += f"🎁 <b>Подарки стримерше:</b> @{message.bot.username}"
     
-    # Кнопки
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📺 Twitch", url=TWITCH_URL),
-            InlineKeyboardButton(text="📷 Instagram", url=INSTAGRAM_URL),
-        ],
-        [
-            InlineKeyboardButton(text="🎁 Подарки", url=f"https://t.me/{message.bot.username}?start"),
-        ]
-    ])
+    # Инструкция по добавлению кнопок
+    buttons_instruction = (
+        f"\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔘 <b>КАК ДОБАВИТЬ КНОПКИ:</b>\n\n"
+        f"1️⃣ При создании поста в канале нажми <b>«Добавить кнопку»</b>\n"
+        f"2️⃣ Добавь кнопки по очереди:\n\n"
+        f"📺 <b>Кнопка 1:</b>\n"
+        f"   Текст: <code>Twitch</code>\n"
+        f"   Ссылка: <code>{TWITCH_URL}</code>\n\n"
+        f"📷 <b>Кнопка 2:</b>\n"
+        f"   Текст: <code>Instagram</code>\n"
+        f"   Ссылка: <code>{INSTAGRAM_URL}</code>\n\n"
+        f"🎁 <b>Кнопка 3:</b>\n"
+        f"   Текст: <code>Подарки</code>\n"
+        f"   Ссылка: <code>https://t.me/{message.bot.username}?start</code>\n\n"
+        f"💡 <b>Совет:</b> Кнопки можно разместить в один ряд или в два."
+    )
     
-    try:
-        if photo_id:
-            await message.bot.send_photo(
-                chat_id=CHANNEL_ID,
-                photo=photo_id,
-                caption=post_text,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-            await message.answer(
-                f"✅ <b>Пост с фото опубликован в канале!</b>\n\n"
-                f"📢 Канал: {CHANNEL_ID}\n"
-                f"📝 Текст: {text[:100]}{'...' if len(text) > 100 else ''}",
-                parse_mode="HTML"
-            )
-        else:
-            await message.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=post_text,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-            await message.answer(
-                f"✅ <b>Пост (без фото) опубликован в канале!</b>\n\n"
-                f"📢 Канал: {CHANNEL_ID}\n"
-                f"📝 Текст: {text[:100]}{'...' if len(text) > 100 else ''}",
-                parse_mode="HTML"
-            )
-        
-    except Exception as e:
-        logger.error(f"Ошибка публикации поста: {e}")
-        error_msg = str(e)
-        if "chat not found" in error_msg.lower():
-            await message.answer(
-                f"❌ Канал не найден. Убедись, что:\n\n"
-                f"1. Бот добавлен в канал {CHANNEL_ID} как администратор\n"
-                f"2. ID канала указан правильно\n\n"
-                f"Текущий CHANNEL_ID: <code>{CHANNEL_ID}</code>",
-                parse_mode="HTML"
-            )
-        else:
-            await message.answer(
-                f"❌ Ошибка публикации: {error_msg[:200]}\n\n"
-                f"Убедись, что бот добавлен в канал как администратор.",
-                parse_mode="HTML"
-            )
+    full_post = post_text + buttons_instruction
+    
+    if photo_id:
+        await message.answer_photo(
+            photo_id,
+            caption=full_post,
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            full_post,
+            parse_mode="HTML"
+        )
+    
+    await message.answer(
+        "✅ <b>Готово!</b>\n\n"
+        "📋 Скопируй текст выше и вставь в канал.\n"
+        "🔘 Добавь кнопки по инструкции.\n"
+        "📢 После этого нажми <b>«Отправить»</b> в канале.\n\n"
+        "💡 <b>Совет:</b> Используй Telegram Web или компьютер для удобного копирования.",
+        parse_mode="HTML"
+    )
 
 
 # === ГАЛЕРЕЯ ===
