@@ -1,34 +1,20 @@
 import logging
-import asyncio
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import (
-    ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, PROFIT_SPLIT,
-    CHANNEL_ID, TWITCH_URL, INSTAGRAM_URL
-)
-from database import (
-    get_all_transactions, add_gallery_photo, get_gallery_photos,
-    get_stats, add_gift
-)
+from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, PROFIT_SPLIT, TWITCH_URL, INSTAGRAM_URL
+from database import get_all_transactions, get_stats, add_gift, add_gallery_photo, get_gallery_photos
 from keyboards import get_admin_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Временные хранилища
+# Хранилища состояний
 waiting_for_gift = {}
 waiting_for_post = {}
 
 
-async def delete_message_after_delay(message: types.Message, delay: int = 30):
-    await asyncio.sleep(delay)
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-
+# ========== ОСНОВНЫЕ КОМАНДЫ ==========
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -41,14 +27,16 @@ async def cmd_admin(message: types.Message):
     )
 
 
+# ========== ОБРАБОТКА КНОПОК АДМИНКИ ==========
 @router.callback_query(F.data.startswith("admin_"))
 async def admin_actions(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("❌ Доступ запрещён")
         return
-    
-    action = callback.data.split("_")[1]
-    
+
+    action = callback.data.split("_", 1)[1]
+
+    # === ЗАКАЗЫ ===
     if action == "orders":
         transactions = await get_all_transactions(limit=20)
         if not transactions:
@@ -56,172 +44,153 @@ async def admin_actions(callback: types.CallbackQuery):
             return
         text = "📦 <b>Последние заказы:</b>\n\n"
         for t in transactions[:10]:
-            username = t.get('username', 'нет')
-            text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{username}\n"
+            text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{t.get('username', 'нет')}\n"
         await callback.message.answer(text, parse_mode="HTML")
-    
+
+    # === СТАТИСТИКА (только супер-админ) ===
     elif action == "stats":
         if callback.from_user.id != SUPER_ADMIN_ID:
             await callback.answer("❌ Только для супер-админа", show_alert=True)
             return
         stats = await get_stats()
-        total_amount = stats['total_amount']
-        lana_share = total_amount * PROFIT_SPLIT['lana']
-        admin_share = total_amount * PROFIT_SPLIT['admin']
-        dev_share = total_amount * PROFIT_SPLIT['development']
-        tax_share = total_amount * PROFIT_SPLIT['tax']
+        total = stats['total_amount']
         await callback.message.answer(
-            f"📊 <b>Полная статистика</b>\n\n"
+            f"📊 <b>Статистика</b>\n\n"
             f"📦 Заказов: {stats['total_orders']}\n"
-            f"💰 Общий оборот: {int(total_amount)}₽\n"
-            f"👥 Пользователей: {stats['total_users']}\n\n"
-            f"📈 <b>Распределение дохода:</b>\n"
-            f"👤 Лана (47%): {int(lana_share)}₽\n"
-            f"👤 Админ (28%): {int(admin_share)}₽\n"
-            f"🚀 Развитие (19%): {int(dev_share)}₽\n"
-            f"📋 Налог (6%): {int(tax_share)}₽",
+            f"💰 Оборот: {int(total)}₽\n"
+            f"👥 Пользователей: {stats['total_users']}",
             parse_mode="HTML"
         )
-    
+
+    # === ГАЛЕРЕЯ ===
     elif action == "gallery":
         await callback.message.answer(
-            "📸 <b>Галерея фото</b>\n\n"
-            "Отправь мне фото с подписью — я добавлю его в галерею.\n\n"
+            "📸 <b>Галерея фото</b>\n\nОтправь фото с подписью — добавлю в галерею.\n"
             "Пример: фото + подпись 'Красивое фото со стрима'",
             parse_mode="HTML"
         )
-    
+
+    # === ДОБАВИТЬ ПОДАРОК (только админы) ===
     elif action == "add_gift":
-        if callback.from_user.id not in [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]:
+        if callback.from_user.id not in (SUPER_ADMIN_ID, SUPPORT_ADMIN_ID):
             await callback.answer("❌ Только для админов", show_alert=True)
             return
         waiting_for_gift[callback.from_user.id] = True
         await callback.message.answer(
-            "🎁 <b>Добавление нового подарка</b>\n\n"
-            "Отправь данные в формате:\n\n"
+            "🎁 <b>Добавление подарка</b>\n\n"
+            "Отправь данные в формате:\n"
             "<code>Название | Цена | Описание | Иконка</code>\n\n"
-            "Пример:\n"
-            "<code>🍕 Пицца | 500 | Вкусная пицца | 🍕</code>\n\n"
+            "Пример:\n<code>🍕 Пицца | 500 | Вкусная пицца | 🍕</code>\n\n"
             "❌ Отмена: /cancel",
             parse_mode="HTML"
         )
-    
+
+    # === СОЗДАТЬ ПОСТ ===
     elif action == "create_post":
         if callback.from_user.id not in ADMIN_IDS:
             await callback.answer("❌ Только для админов", show_alert=True)
             return
-        waiting_for_post[callback.from_user.id] = {"stage": "text"}
+        waiting_for_post[callback.from_user.id] = {"step": "text"}
         await callback.message.answer(
-            "📢 <b>Создание поста — Шаг 1 из 2</b>\n\n"
-            "✏️ <b>Напиши текст поста</b>\n\n"
-            "Ссылки на Twitch, Instagram и бот добавятся автоматически.\n\n"
+            "📢 <b>Создание поста — текст</b>\n\n"
+            "✏️ Напиши текст поста (без ссылок, они добавятся сами).\n\n"
             "❌ Отмена: /cancel",
             parse_mode="HTML"
         )
-        await callback.answer()
-    
+
     await callback.answer()
 
 
+# ========== ДОБАВЛЕНИЕ ПОДАРКА (текст) ==========
 @router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
-async def handle_add_gift(message: types.Message):
+async def add_gift_text(message: types.Message):
     if not waiting_for_gift.get(message.from_user.id):
         return
     try:
         parts = message.text.split("|")
         if len(parts) < 3:
-            await message.answer("❌ Неправильный формат!\n\nОтправь: <code>Название | Цена | Описание | Иконка</code>", parse_mode="HTML")
+            await message.answer("❌ Ошибка: нужно <code>Название | Цена | Описание | Иконка</code>", parse_mode="HTML")
             return
         name = parts[0].strip()
         price = int(parts[1].strip())
-        description = parts[2].strip() if len(parts) > 2 else ""
+        desc = parts[2].strip()
         icon = parts[3].strip() if len(parts) > 3 else "🎁"
-        success = await add_gift(name, price, description, icon)
-        if success:
-            await message.answer(f"✅ <b>Подарок добавлен!</b>\n\n{icon} {name} | {price}₽", parse_mode="HTML")
-        else:
-            await message.answer("❌ Ошибка при добавлении подарка.")
+        await add_gift(name, price, desc, icon)
+        await message.answer(f"✅ Подарок <b>{name}</b> добавлен!", parse_mode="HTML")
     except Exception as e:
-        await message.answer("❌ Ошибка формата. Пример: <code>🍕 Пицца | 500 | Вкусная пицца | 🍕</code>", parse_mode="HTML")
+        await message.answer(f"❌ Ошибка: {e}")
     finally:
         waiting_for_gift.pop(message.from_user.id, None)
 
 
+# ========== СОЗДАНИЕ ПОСТА — ШАГ 1: ТЕКСТ ==========
 @router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
-async def handle_post_text(message: types.Message):
-    post_data = waiting_for_post.get(message.from_user.id)
-    if not post_data or post_data.get("stage") != "text":
+async def post_text_step(message: types.Message):
+    state = waiting_for_post.get(message.from_user.id)
+    if not state or state.get("step") != "text":
         return
-    waiting_for_post[message.from_user.id] = {"stage": "photo", "text": message.text}
+    waiting_for_post[message.from_user.id] = {"step": "photo", "text": message.text}
     await message.answer(
-        "📢 <b>Создание поста — Шаг 2 из 2</b>\n\n"
-        "📸 <b>Отправь фото для поста</b>\n\n"
-        "✅ <b>/skip</b> — пропустить фото\n"
-        "❌ <b>/cancel</b> — отменить",
+        "📢 <b>Создание поста — фото</b>\n\n"
+        "📸 Отправь фото (или /skip, чтобы пропустить)\n\n"
+        "❌ Отмена: /cancel",
         parse_mode="HTML"
     )
 
 
 @router.message(Command("skip"))
 async def skip_photo(message: types.Message):
-    post_data = waiting_for_post.get(message.from_user.id)
-    if not post_data or post_data.get("stage") != "photo":
+    state = waiting_for_post.get(message.from_user.id)
+    if not state or state.get("step") != "photo":
         return
-    await show_ready_post(message, post_data["text"], None)
+    await finish_post(message, state["text"], None)
     waiting_for_post.pop(message.from_user.id, None)
 
 
 @router.message(F.photo & F.from_user.id.in_(ADMIN_IDS))
-async def handle_post_photo(message: types.Message):
-    post_data = waiting_for_post.get(message.from_user.id)
-    if not post_data or post_data.get("stage") != "photo":
+async def post_photo_step(message: types.Message):
+    state = waiting_for_post.get(message.from_user.id)
+    if not state or state.get("step") != "photo":
         return
     photo = message.photo[-1]
-    await show_ready_post(message, post_data["text"], photo.file_id)
+    await finish_post(message, state["text"], photo.file_id)
     waiting_for_post.pop(message.from_user.id, None)
 
 
-async def show_ready_post(message: types.Message, text: str, photo_id: str = None):
+async def finish_post(message: types.Message, text: str, photo_id: str = None):
     post_text = f"{text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    post_text += f"📺 <b>Twitch:</b> {TWITCH_URL}\n"
-    post_text += f"📷 <b>Instagram:</b> {INSTAGRAM_URL}\n"
-    post_text += f"💳 <b>Поддержать:</b> /start\n\n"
-    post_text += f"🎁 <b>Подарки стримерше:</b> @{message.bot.username}"
-    
-    buttons_help = (
-        f"\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🔘 <b>КАК ДОБАВИТЬ КНОПКИ:</b>\n\n"
-        f"1️⃣ Нажми <b>«Добавить кнопку»</b>\n"
-        f"2️⃣ Добавь кнопки:\n\n"
-        f"📺 <b>Кнопка 1:</b> Текст <code>Twitch</code> → ссылка <code>{TWITCH_URL}</code>\n"
-        f"📷 <b>Кнопка 2:</b> Текст <code>Instagram</code> → ссылка <code>{INSTAGRAM_URL}</code>\n"
-        f"🎁 <b>Кнопка 3:</b> Текст <code>Подарки</code> → ссылка <code>https://t.me/{message.bot.username}?start</code>\n\n"
-        f"3️⃣ Нажми <b>«Отправить»</b>"
-    )
-    
-    full = post_text + buttons_help
-    
+    post_text += f"📺 <b>Twitch</b>: {TWITCH_URL}\n"
+    post_text += f"📷 <b>Instagram</b>: {INSTAGRAM_URL}\n"
+    post_text += f"🎁 <b>Подарки</b>: @{message.bot.username}\n\n"
+    post_text += "🔘 <b>Кнопки (добавь вручную):</b>\n"
+    post_text += f"• Twitch: {TWITCH_URL}\n"
+    post_text += f"• Instagram: {INSTAGRAM_URL}\n"
+    post_text += f"• Подарки: https://t.me/{message.bot.username}?start"
+
     if photo_id:
-        await message.answer_photo(photo_id, caption=full, parse_mode="HTML")
+        await message.answer_photo(photo_id, caption=post_text, parse_mode="HTML")
     else:
-        await message.answer(full, parse_mode="HTML")
-    
+        await message.answer(post_text, parse_mode="HTML")
+
     await message.answer(
-        "✅ <b>Готово!</b>\n\n📋 Скопируй текст выше и вставь в канал.\n🔘 Добавь кнопки по инструкции.\n📢 Нажми «Отправить».",
+        "✅ <b>Готово!</b>\n\n"
+        "📋 Скопируй текст выше и вставь в канал.\n"
+        "🔘 Добавь кнопки по инструкции.\n"
+        "📢 Нажми «Отправить».",
         parse_mode="HTML"
     )
 
 
+# ========== ГАЛЕРЕЯ: ПРИЁМ ФОТО ==========
 @router.message(F.photo)
-async def handle_gallery_photo(message: types.Message):
+async def gallery_photo(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-    if waiting_for_post.get(message.from_user.id, {}).get("stage") == "photo":
+    if waiting_for_post.get(message.from_user.id, {}).get("step") == "photo":
         return
     photo = message.photo[-1]
     await add_gallery_photo(photo.file_id, message.caption or "", message.from_user.id)
-    msg = await message.answer("✅ Фото добавлено в галерею!", parse_mode="HTML")
-    asyncio.create_task(delete_message_after_delay(msg, 30))
+    await message.answer("✅ Фото добавлено в галерею!")
 
 
 @router.message(Command("gallery"))
@@ -234,28 +203,27 @@ async def show_gallery(message: types.Message):
         await message.answer("📸 Галерея пуста.")
         return
     await message.answer("📸 <b>Последние фото:</b>", parse_mode="HTML")
-    for photo_id, caption, created_at in photos[:5]:
-        await message.answer_photo(photo_id, caption=f"📅 {created_at}\n{caption or 'без подписи'}", parse_mode="HTML")
+    for pid, caption, date in photos[:5]:
+        await message.answer_photo(pid, caption=f"📅 {date}\n{caption or 'без подписи'}", parse_mode="HTML")
 
 
 @router.message(Command("stats"))
-async def cmd_stats(message: types.Message):
+async def stats_cmd(message: types.Message):
     if message.from_user.id != SUPER_ADMIN_ID:
         await message.answer("❌ Только для супер-админа")
         return
     stats = await get_stats()
-    total = stats['total_amount']
     await message.answer(
         f"📊 <b>Статистика</b>\n\n"
         f"📦 Заказов: {stats['total_orders']}\n"
-        f"💰 Оборот: {int(total)}₽\n"
+        f"💰 Оборот: {stats['total_amount']}₽\n"
         f"👥 Пользователей: {stats['total_users']}",
         parse_mode="HTML"
     )
 
 
 @router.message(Command("cancel"))
-async def cmd_cancel(message: types.Message):
+async def cancel_action(message: types.Message):
     if message.from_user.id in waiting_for_gift:
         waiting_for_gift.pop(message.from_user.id)
         await message.answer("❌ Добавление подарка отменено.")
