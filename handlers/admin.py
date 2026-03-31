@@ -1,13 +1,14 @@
 import logging
-from aiogram import Router, types, F
+from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, TWITCH_URL, INSTAGRAM_URL, CHANNEL_ID
+from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, TWITCH_URL, INSTAGRAM_URL, CHANNEL_ID, BOT_TOKEN
 from database import get_all_transactions, get_stats, add_gift, add_gallery_photo, get_gallery_photos
 from keyboards import get_admin_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
+bot = Bot(token=BOT_TOKEN)
 
 waiting_for_gift = {}
 waiting_for_post = {}
@@ -190,14 +191,14 @@ async def publish_post(callback: types.CallbackQuery):
 
     try:
         if photo_id:
-            await callback.bot.send_photo(
+            await bot.send_photo(
                 chat_id=CHANNEL_ID,
                 photo=photo_id,
                 caption=post_text,
                 parse_mode="HTML"
             )
         else:
-            await callback.bot.send_message(
+            await bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=post_text,
                 parse_mode="HTML"
