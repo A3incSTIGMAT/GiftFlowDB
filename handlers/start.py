@@ -16,17 +16,18 @@ super_admin_mode = {}
 async def cmd_start(message: types.Message):
     """Обработчик команды /start"""
     try:
-        user = await get_user(message.from_user.id)
-        if not user:
-            await add_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-            logger.info(f"Новый пользователь: {message.from_user.id}")
+        user_id = message.from_user.id
+        logger.info(f"🔍 /start от пользователя {user_id}")
         
-        logger.info(f"Пользователь {message.from_user.id} в ADMIN_IDS: {message.from_user.id in ADMIN_IDS}")
-        logger.info(f"ADMIN_IDS: {ADMIN_IDS}")
+        user = await get_user(user_id)
+        if not user:
+            await add_user(user_id, message.from_user.username, message.from_user.first_name)
+            logger.info(f"✅ Новый пользователь: {user_id}")
         
         # Супер-админ (895844198) — показываем выбор режима
-        if message.from_user.id == SUPER_ADMIN_ID:
-            super_admin_mode[message.from_user.id] = None
+        if user_id == SUPER_ADMIN_ID:
+            logger.info(f"👑 Супер-админ режим для {user_id}")
+            super_admin_mode[user_id] = None
             
             await message.answer(
                 f"👑 <b>Привет, Супер-админ {message.from_user.first_name}!</b>\n\n"
@@ -38,30 +39,38 @@ async def cmd_start(message: types.Message):
                 reply_markup=await get_super_admin_choice_keyboard()
             )
         
-        # Обычный админ (Лана — 7076299389) — сразу в админ-панель
-        elif message.from_user.id == SUPPORT_ADMIN_ID:
+        # Лана (838701177) — сразу в админ-панель
+        elif user_id == SUPPORT_ADMIN_ID:
+            logger.info(f"👤 Админ (Лана) режим для {user_id}")
+            
+            admin_kb = await get_admin_keyboard(user_id)
+            
             await message.answer(
-                f"👋 <b>Привет, Админ!</b>\n\n"
-                f"Управление ботом {STREAMER_NAME}\n\n"
+                f"👋 <b>Привет, {STREAMER_NAME}!</b>\n\n"
+                f"Управление ботом:\n\n"
                 f"📢 <b>Создать пост</b> — кнопка в админ-панели\n"
                 f"📦 <b>Заказы</b> — список ожидающих платежей\n"
                 f"📸 <b>Галерея</b> — фото для постов\n\n"
                 f"👇 Выбери действие:",
                 parse_mode="HTML",
-                reply_markup=await get_admin_keyboard(message.from_user.id)
+                reply_markup=admin_kb
             )
         
         # Другие админы (если есть)
-        elif message.from_user.id in ADMIN_IDS:
+        elif user_id in ADMIN_IDS:
+            logger.info(f"👤 Другой админ режим для {user_id}")
+            
             await message.answer(
                 f"👋 <b>Привет, Админ!</b>\n\n"
                 f"Управление ботом {STREAMER_NAME}",
                 parse_mode="HTML",
-                reply_markup=await get_admin_keyboard(message.from_user.id)
+                reply_markup=await get_admin_keyboard(user_id)
             )
         
         # Обычный пользователь
         else:
+            logger.info(f"👤 Обычный пользователь режим для {user_id}")
+            
             await message.answer(
                 f"👋 <b>Привет, {message.from_user.first_name}!</b>\n\n"
                 f"🎮 Это бот стримерши <b>{STREAMER_NAME}</b>\n\n"
@@ -74,7 +83,7 @@ async def cmd_start(message: types.Message):
             )
             
     except Exception as e:
-        logger.error(f"Ошибка в /start: {e}")
+        logger.error(f"❌ Ошибка в /start: {e}")
         await message.answer(
             "❌ Произошла ошибка. Попробуй позже.",
             parse_mode="HTML"
@@ -160,10 +169,11 @@ async def back_to_main(callback: types.CallbackQuery):
     """Возврат в главное меню (в зависимости от режима)"""
     try:
         current_text = callback.message.text or ""
+        user_id = callback.from_user.id
         
         # Супер-админ
-        if callback.from_user.id == SUPER_ADMIN_ID:
-            if super_admin_mode.get(callback.from_user.id) == "user":
+        if user_id == SUPER_ADMIN_ID:
+            if super_admin_mode.get(user_id) == "user":
                 if "Главное меню" in current_text or "Выбери действие" in current_text:
                     await callback.answer("🔹 Вы уже в главном меню")
                     return
@@ -187,8 +197,8 @@ async def back_to_main(callback: types.CallbackQuery):
                     reply_markup=await get_super_admin_choice_keyboard()
                 )
         
-        # Обычный админ (Лана)
-        elif callback.from_user.id == SUPPORT_ADMIN_ID:
+        # Лана
+        elif user_id == SUPPORT_ADMIN_ID:
             if "Админ-панель" in current_text:
                 await callback.answer("🔹 Вы уже в админ-панели")
                 return
@@ -197,11 +207,11 @@ async def back_to_main(callback: types.CallbackQuery):
                 "⚙️ <b>Админ-панель</b>\n\n"
                 "Выбери раздел управления:",
                 parse_mode="HTML",
-                reply_markup=await get_admin_keyboard(callback.from_user.id)
+                reply_markup=await get_admin_keyboard(user_id)
             )
         
         # Другие админы
-        elif callback.from_user.id in ADMIN_IDS:
+        elif user_id in ADMIN_IDS:
             if "Админ-панель" in current_text:
                 await callback.answer("🔹 Вы уже в админ-панели")
                 return
@@ -209,7 +219,7 @@ async def back_to_main(callback: types.CallbackQuery):
             await callback.message.edit_text(
                 "⚙️ <b>Админ-панель</b>",
                 parse_mode="HTML",
-                reply_markup=await get_admin_keyboard(callback.from_user.id)
+                reply_markup=await get_admin_keyboard(user_id)
             )
         
         # Обычный пользователь
