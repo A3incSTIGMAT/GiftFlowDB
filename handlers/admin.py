@@ -1,7 +1,12 @@
 import logging
+import asyncio
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from config import ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, PROFIT_SPLIT
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from config import (
+    ADMIN_IDS, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, PROFIT_SPLIT,
+    CHANNEL_ID, TWITCH_URL, INSTAGRAM_URL
+)
 from database import (
     get_all_transactions, add_gallery_photo, get_gallery_photos,
     get_stats, add_gift
@@ -13,6 +18,16 @@ router = Router()
 
 # Временные хранилища
 waiting_for_gift = {}
+waiting_for_post = {}
+
+
+async def delete_message_after_delay(message: types.Message, delay: int = 30):
+    """Удаляет сообщение через указанное время"""
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
 
 @router.message(Command("admin"))
@@ -109,9 +124,27 @@ async def admin_actions(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
     
+    # === СОЗДАТЬ ПОСТ ===
+    elif action == "create_post":
+        if callback.from_user.id not in [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]:
+            await callback.answer("❌ Только для админов", show_alert=True)
+            return
+        
+        waiting_for_post[callback.from_user.id] = {"stage": "text"}
+        
+        await callback.message.answer(
+            "📢 <b>Создание поста</b>\n\n"
+            "Отправь текст поста (без ссылок, они добавятся автоматически):\n\n"
+            "💡 <b>Подсказка:</b> Текст может быть с эмодзи, форматированием.\n\n"
+            "После текста отправь фото (опционально).\n\n"
+            "❌ Отмена: /cancel",
+            parse_mode="HTML"
+        )
+    
     await callback.answer()
 
 
+# === ОБРАБОТКА ДОБАВЛЕНИЯ ПОДАРКА ===
 @router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
 async def handle_add_gift(message: types.Message):
     """Обработка добавления подарка"""
@@ -162,11 +195,123 @@ async def handle_add_gift(message: types.Message):
         waiting_for_gift.pop(message.from_user.id, None)
 
 
+# === СОЗДАНИЕ ПОСТА ===
+@router.message(F.text & F.from_user.id.in_(ADMIN_IDS))
+async def handle_post_text(message: types.Message):
+    """Обработка текста поста"""
+    post_data = waiting_for_post.get(message.from_user.id)
+    if not post_data or post_data.get("stage") != "text":
+        return
+    
+    waiting_for_post[message.from_user.id] = {
+        "stage": "photo",
+        "text": message.text
+    }
+    
+    await message.answer(
+        "📸 <b>Отправь фото для поста</b>\n\n"
+        "Отправь одно фото (или нажми /skip, чтобы пропустить).\n\n"
+        "❌ Отмена: /cancel",
+        parse_mode="HTML"
+    )
+
+
+@router.message(Command("skip"))
+async def skip_photo(message: types.Message):
+    """Пропустить фото"""
+    post_data = waiting_for_post.get(message.from_user.id)
+    if not post_data:
+        return
+    
+    text = post_data.get("text", "")
+    
+    await publish_post(message, text, None)
+    waiting_for_post.pop(message.from_user.id, None)
+
+
+@router.message(F.photo & F.from_user.id.in_(ADMIN_IDS))
+async def handle_post_photo(message: types.Message):
+    """Обработка фото для поста"""
+    post_data = waiting_for_post.get(message.from_user.id)
+    if not post_data or post_data.get("stage") != "photo":
+        return
+    
+    photo = message.photo[-1]
+    text = post_data.get("text", "")
+    
+    await publish_post(message, text, photo.file_id)
+    waiting_for_post.pop(message.from_user.id, None)
+
+
+async def publish_post(message: types.Message, text: str, photo_id: str = None):
+    """Публикация поста в канал"""
+    if not CHANNEL_ID:
+        await message.answer(
+            "❌ Канал не настроен. Добавь переменную CHANNEL_ID в настройках Amvera.",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Формируем пост с ссылками
+    post_text = f"{text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    post_text += f"📺 <b>Twitch:</b> {TWITCH_URL}\n"
+    post_text += f"📷 <b>Instagram:</b> {INSTAGRAM_URL}\n"
+    post_text += f"💳 <b>Поддержать:</b> /start\n\n"
+    post_text += f"🎁 <b>Подарки стримерше:</b> @{message.bot.username}"
+    
+    # Кнопки
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📺 Twitch", url=TWITCH_URL),
+            InlineKeyboardButton(text="📷 Instagram", url=INSTAGRAM_URL),
+        ],
+        [
+            InlineKeyboardButton(text="🎁 Подарки", url=f"https://t.me/{message.bot.username}?start"),
+        ]
+    ])
+    
+    try:
+        if photo_id:
+            await message.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=photo_id,
+                caption=post_text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+        else:
+            await message.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=post_text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+        
+        await message.answer(
+            f"✅ <b>Пост опубликован в канале!</b>\n\n"
+            f"📢 Канал: {CHANNEL_ID}\n"
+            f"📝 Текст: {text[:100]}{'...' if len(text) > 100 else ''}",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка публикации поста: {e}")
+        await message.answer(
+            f"❌ Ошибка публикации: {e}\n\n"
+            f"Убедись, что бот добавлен в канал как администратор.",
+            parse_mode="HTML"
+        )
+
+
+# === ГАЛЕРЕЯ ===
 @router.message(F.photo)
 async def handle_gallery_photo(message: types.Message):
     """Обработка загрузки фото в галерею"""
     if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для админов")
+        return
+    
+    # Если это процесс создания поста — не добавляем в галерею
+    if waiting_for_post.get(message.from_user.id, {}).get("stage") == "photo":
         return
     
     photo = message.photo[-1]
@@ -174,11 +319,12 @@ async def handle_gallery_photo(message: types.Message):
     
     await add_gallery_photo(photo.file_id, caption, message.from_user.id)
     
-    await message.answer(
+    msg = await message.answer(
         f"✅ Фото добавлено в галерею!\n"
         f"📝 Подпись: {caption if caption else 'без подписи'}",
         parse_mode="HTML"
     )
+    asyncio.create_task(delete_message_after_delay(msg, 30))
 
 
 @router.message(Command("gallery"))
@@ -230,3 +376,16 @@ async def cmd_stats(message: types.Message):
         f"📋 Налог: {int(tax_share)}₽",
         parse_mode="HTML"
     )
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: types.Message):
+    """Отмена текущего действия"""
+    if message.from_user.id in waiting_for_gift:
+        waiting_for_gift.pop(message.from_user.id)
+        await message.answer("❌ Добавление подарка отменено.")
+    elif message.from_user.id in waiting_for_post:
+        waiting_for_post.pop(message.from_user.id)
+        await message.answer("❌ Создание поста отменено.")
+    else:
+        await message.answer("❌ Нет активных действий для отмены.")
