@@ -36,7 +36,6 @@ async def admin_actions(callback: types.CallbackQuery):
 
     action = callback.data.split("_", 1)[1]
 
-    # === ЗАКАЗЫ ===
     if action == "orders":
         transactions = await get_all_transactions(limit=20)
         if not transactions:
@@ -47,7 +46,6 @@ async def admin_actions(callback: types.CallbackQuery):
             text += f"💰 {t['amount']}₽ | {t['gift_name']} | @{t.get('username', 'нет')}\n"
         await callback.message.answer(text, parse_mode="HTML")
 
-    # === СТАТИСТИКА (только супер-админ) ===
     elif action == "stats":
         if callback.from_user.id != SUPER_ADMIN_ID:
             await callback.answer("❌ Только для супер-админа", show_alert=True)
@@ -62,7 +60,6 @@ async def admin_actions(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    # === ГАЛЕРЕЯ ===
     elif action == "gallery":
         await callback.message.answer(
             "📸 <b>Галерея фото</b>\n\nОтправь фото с подписью — добавлю в галерею.\n"
@@ -70,7 +67,6 @@ async def admin_actions(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    # === ДОБАВИТЬ ПОДАРОК (только админы) ===
     elif action == "add_gift":
         if callback.from_user.id not in (SUPER_ADMIN_ID, SUPPORT_ADMIN_ID):
             await callback.answer("❌ Только для админов", show_alert=True)
@@ -85,7 +81,6 @@ async def admin_actions(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    # === СОЗДАТЬ ПОСТ ===
     elif action == "create_post":
         if callback.from_user.id not in ADMIN_IDS:
             await callback.answer("❌ Только для админов", show_alert=True)
@@ -162,7 +157,7 @@ async def finish_post(message: types.Message, text: str, photo_id: str = None):
     post_text += f"📺 <b>Twitch</b>: {TWITCH_URL}\n"
     post_text += f"📷 <b>Instagram</b>: {INSTAGRAM_URL}\n"
     post_text += f"🎁 <b>Подарки</b>: @{message.bot.username}\n\n"
-    post_text += "🔘 <b>Кнопки (добавь вручную):</b>\n"
+    post_text += "🔘 <b>Кнопки (добавь вручную при публикации в канале):</b>\n"
     post_text += f"• Twitch: {TWITCH_URL}\n"
     post_text += f"• Instagram: {INSTAGRAM_URL}\n"
     post_text += f"• Подарки: https://t.me/{message.bot.username}?start"
