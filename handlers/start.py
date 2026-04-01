@@ -172,3 +172,31 @@ async def cmd_test(message: types.Message):
         f"🆔 Твой ID: <code>{message.from_user.id}</code>",
         parse_mode="HTML"
     )
+
+
+# ========== ВРЕМЕННЫЙ ХЕНДЛЕР ДЛЯ ПОЛУЧЕНИЯ ID КАНАЛА ==========
+@router.message(Command("channel_id"))
+async def get_channel_id(message: types.Message):
+    """Получение ID канала (временный хендлер)"""
+    if message.forward_from_chat:
+        chat_id = message.forward_from_chat.id
+        chat_title = message.forward_from_chat.title or "без названия"
+        chat_type = "канал" if message.forward_from_chat.type == "channel" else "чат"
+        await message.answer(
+            f"✅ <b>Информация о {chat_type}</b>\n\n"
+            f"📢 Название: {chat_title}\n"
+            f"🆔 ID: <code>{chat_id}</code>\n\n"
+            f"📝 Скопируй этот ID и добавь в переменную CHANNEL_ID в Amvera\n\n"
+            f"💡 Пример: <code>CHANNEL_ID={chat_id}</code>",
+            parse_mode="HTML"
+        )
+        logger.info(f"Пользователь {message.from_user.id} получил ID канала: {chat_id}")
+    else:
+        await message.answer(
+            "📎 <b>Как получить ID канала:</b>\n\n"
+            "1️⃣ Перешли любое сообщение из канала в этот чат\n"
+            "2️⃣ Затем снова напиши /channel_id\n\n"
+            "🔹 Канал: @lanatwitchh\n\n"
+            "📌 Если у тебя нет сообщений из канала, просто перешли любое сообщение сюда.",
+            parse_mode="HTML"
+        )
