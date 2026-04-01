@@ -177,26 +177,39 @@ async def cmd_test(message: types.Message):
 # ========== ВРЕМЕННЫЙ ХЕНДЛЕР ДЛЯ ПОЛУЧЕНИЯ ID КАНАЛА ==========
 @router.message(Command("channel_id"))
 async def get_channel_id(message: types.Message):
-    """Получение ID канала (временный хендлер)"""
+    """Получение ID канала (работает с пересланными сообщениями)"""
+    
+    # Проверяем, есть ли пересланное сообщение из канала
     if message.forward_from_chat:
+        # Если переслано с указанием источника
         chat_id = message.forward_from_chat.id
         chat_title = message.forward_from_chat.title or "без названия"
-        chat_type = "канал" if message.forward_from_chat.type == "channel" else "чат"
         await message.answer(
-            f"✅ <b>Информация о {chat_type}</b>\n\n"
+            f"✅ <b>ID канала</b>\n\n"
             f"📢 Название: {chat_title}\n"
             f"🆔 ID: <code>{chat_id}</code>\n\n"
-            f"📝 Скопируй этот ID и добавь в переменную CHANNEL_ID в Amvera\n\n"
-            f"💡 Пример: <code>CHANNEL_ID={chat_id}</code>",
+            f"📝 Добавь в Amvera:\n"
+            f"<code>CHANNEL_ID={chat_id}</code>",
             parse_mode="HTML"
         )
         logger.info(f"Пользователь {message.from_user.id} получил ID канала: {chat_id}")
+    elif message.forward_from:
+        # Если переслано от пользователя (не подходит)
+        await message.answer(
+            "❌ Это пересланное сообщение от пользователя, а не из канала.\n\n"
+            "📌 Перешли сообщение ИЗ КАНАЛА, нажав на сообщение в канале и выбрав «Переслать».\n\n"
+            "🔹 Канал: @lanatwitchh",
+            parse_mode="HTML"
+        )
     else:
         await message.answer(
             "📎 <b>Как получить ID канала:</b>\n\n"
-            "1️⃣ Перешли любое сообщение из канала в этот чат\n"
-            "2️⃣ Затем снова напиши /channel_id\n\n"
-            "🔹 Канал: @lanatwitchh\n\n"
-            "📌 Если у тебя нет сообщений из канала, просто перешли любое сообщение сюда.",
+            "1️⃣ Зайди в канал @lanatwitchh\n"
+            "2️⃣ Нажми на любое сообщение → «Переслать»\n"
+            "3️⃣ Выбери этого бота (@GiftFlowDB_bot)\n"
+            "4️⃣ После пересылки напиши /channel_id\n\n"
+            "⚠️ <b>Важно:</b> При пересылке убедись, что включена галочка\n"
+            "«Ссылка на источник» или «Сохранить авторство».\n\n"
+            "🔹 Если всё сделано правильно, бот покажет ID канала.",
             parse_mode="HTML"
         )
