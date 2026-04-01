@@ -1,9 +1,15 @@
 import aiosqlite
 import os
 import logging
+import asyncio
+from datetime import datetime
+from typing import Optional, Dict, Any, List, Tuple
 from config import DB_PATH
 
 logger = logging.getLogger(__name__)
+
+# Кэш для статистики
+_stats_cache: Dict[str, Any] = {"data": None, "timestamp": 0}
 
 
 async def ensure_db_directory():
@@ -25,6 +31,7 @@ async def init_db():
         
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("PRAGMA foreign_keys = ON")
+            await db.execute("PRAGMA journal_mode = WAL")
             
             # === ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ===
             await db.execute("""
@@ -65,7 +72,7 @@ async def init_db():
                     gift_name TEXT,
                     amount INTEGER NOT NULL,
                     payment_id TEXT,
-                    payment_system TEXT DEFAULT 'donatepay',
+                    payment_system TEXT DEFAULT 'ozon',
                     status TEXT DEFAULT 'pending',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     completed_at TIMESTAMP,
@@ -96,11 +103,22 @@ async def init_db():
                 )
             """)
             
+            # === ТАБЛИЦА ЛОГОВ АДМИНОВ ===
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS admin_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    action TEXT,
+                    details TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
             await db.commit()
             logger.info(f"✅ База данных инициализирована: {DB_PATH}")
         
         await init_gifts()
-        await update_cached_stats()
+        await update_stats_cache()
         
     except Exception as e:
         logger.error(f"❌ Ошибка при инициализации БД: {e}")
@@ -166,31 +184,8 @@ async def init_gifts():
         logger.error(f"❌ Ошибка при инициализации подарков: {e}")
 
 
-async def update_cached_stats():
-    """Обновляет кэшированную статистику"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'completed'")
-            total_orders = (await cursor.fetchone())[0]
-            
-            cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'completed'")
-            total_amount = (await cursor.fetchone())[0] or 0
-            
-            await db.execute(
-                "INSERT OR REPLACE INTO stats (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                ("total_orders", str(total_orders))
-            )
-            await db.execute(
-                "INSERT OR REPLACE INTO stats (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                ("total_amount", str(total_amount))
-            )
-            await db.commit()
-            
-    except Exception as e:
-        logger.error(f"Ошибка обновления статистики: {e}")
-
-
-async def get_user(user_id: int):
+# ========== ПОЛЬЗОВАТЕЛИ ==========
+async def get_user(user_id: int) -> Optional[Dict]:
     """Получить пользователя по ID"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -215,7 +210,7 @@ async def get_user(user_id: int):
 
 
 async def add_user(user_id: int, username: str = None, first_name: str = None, last_name: str = None):
-    """Добавить пользователя"""
+    """Добавить или обновить пользователя"""
     try:
         from config import ADMIN_IDS
         
@@ -233,8 +228,9 @@ async def add_user(user_id: int, username: str = None, first_name: str = None, l
         logger.error(f"Ошибка add_user: {e}")
 
 
-async def get_all_gifts():
-    """Получить все активные подарки с иконками"""
+# ========== ПОДАРКИ ==========
+async def get_all_gifts() -> List[Dict]:
+    """Получить все активные подарки"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute(
@@ -247,7 +243,7 @@ async def get_all_gifts():
         return []
 
 
-async def get_gift_by_id(gift_id: int):
+async def get_gift_by_id(gift_id: int) -> Optional[Dict]:
     """Получить подарок по ID"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -270,11 +266,10 @@ async def get_gift_by_id(gift_id: int):
         return None
 
 
-async def add_gift(name: str, price: int, description: str, icon: str = "🎁", category: str = "default"):
-    """Добавить новый подарок (только для админов)"""
+async def add_gift(name: str, price: int, description: str, icon: str = "🎁", category: str = "default") -> bool:
+    """Добавить новый подарок"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # Получаем максимальный sort_order
             cursor = await db.execute("SELECT MAX(sort_order) FROM gifts")
             max_order = (await cursor.fetchone())[0] or 0
             new_order = max_order + 1
@@ -292,7 +287,8 @@ async def add_gift(name: str, price: int, description: str, icon: str = "🎁", 
         return False
 
 
-async def add_transaction(user_id: int, username: str, gift_id: int, gift_name: str, amount: int, payment_id: str = None):
+# ========== ТРАНЗАКЦИИ ==========
+async def add_transaction(user_id: int, username: str, gift_id: int, gift_name: str, amount: int, payment_id: str = None) -> Optional[int]:
     """Добавить транзакцию"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -304,14 +300,14 @@ async def add_transaction(user_id: int, username: str, gift_id: int, gift_name: 
             await db.commit()
             transaction_id = cursor.lastrowid
             logger.info(f"✅ Транзакция {transaction_id} добавлена: {amount}₽ от {username}")
-            await update_cached_stats()
+            await update_stats_cache()
             return transaction_id
     except Exception as e:
         logger.error(f"Ошибка add_transaction: {e}")
         return None
 
 
-async def get_all_transactions(limit: int = 50):
+async def get_all_transactions(limit: int = 50) -> List[Dict]:
     """Получить последние транзакции"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -335,7 +331,8 @@ async def get_all_transactions(limit: int = 50):
         return []
 
 
-async def get_stats():
+# ========== СТАТИСТИКА ==========
+async def get_stats() -> Dict[str, Any]:
     """Получить статистику"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -358,7 +355,43 @@ async def get_stats():
         return {"total_orders": 0, "total_amount": 0, "total_users": 0}
 
 
-async def add_gallery_photo(photo_id: str, caption: str, created_by: int):
+async def update_stats_cache() -> Optional[Dict]:
+    """Обновление кэша статистики"""
+    global _stats_cache
+    try:
+        stats = await get_stats()
+        _stats_cache["data"] = stats
+        _stats_cache["timestamp"] = asyncio.get_event_loop().time()
+        logger.info("✅ Кэш статистики обновлён")
+        return stats
+    except Exception as e:
+        logger.error(f"Ошибка обновления кэша статистики: {e}")
+        return None
+
+
+def get_stats_cached() -> Optional[Dict]:
+    """Получение статистики из кэша"""
+    if _stats_cache["data"] and (asyncio.get_event_loop().time() - _stats_cache["timestamp"]) < 300:
+        return _stats_cache["data"]
+    return None
+
+
+async def clear_transactions() -> bool:
+    """Очистить все транзакции (только для супер-админа)"""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("DELETE FROM transactions")
+            await db.commit()
+            logger.warning("⚠️ Все транзакции удалены")
+            await update_stats_cache()
+            return True
+    except Exception as e:
+        logger.error(f"Ошибка clear_transactions: {e}")
+        return False
+
+
+# ========== ГАЛЕРЕЯ ==========
+async def add_gallery_photo(photo_id: str, caption: str, created_by: int) -> bool:
     """Добавить фото в галерею"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -368,11 +401,13 @@ async def add_gallery_photo(photo_id: str, caption: str, created_by: int):
             )
             await db.commit()
             logger.info(f"✅ Фото добавлено в галерею: {photo_id}")
+            return True
     except Exception as e:
         logger.error(f"Ошибка add_gallery_photo: {e}")
+        return False
 
 
-async def get_gallery_photos(limit: int = 20):
+async def get_gallery_photos(limit: int = 20) -> List[Tuple[str, str, str]]:
     """Получить фото из галереи"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -386,13 +421,79 @@ async def get_gallery_photos(limit: int = 20):
         return []
 
 
-async def clear_transactions():
-    """Очистить все транзакции (только для супер-админа)"""
+async def delete_gallery_photo(photo_id: str) -> bool:
+    """Удалить фото из галереи (мягкое удаление)"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM transactions")
+            await db.execute(
+                "UPDATE gallery SET is_active = 0 WHERE photo_id = ?",
+                (photo_id,)
+            )
             await db.commit()
-            logger.warning("⚠️ Все транзакции удалены")
-            await update_cached_stats()
+            logger.info(f"✅ Фото удалено из галереи: {photo_id}")
+            return True
     except Exception as e:
-        logger.error(f"Ошибка clear_transactions: {e}")
+        logger.error(f"Ошибка delete_gallery_photo: {e}")
+        return False
+
+
+# ========== ЛОГИ АДМИНОВ ==========
+async def log_admin_action(user_id: int, action: str, details: str = "") -> bool:
+    """
+    Логирование действий администраторов
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT INTO admin_logs (user_id, action, details) VALUES (?, ?, ?)",
+                (user_id, action, details[:500])
+            )
+            await db.commit()
+            
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"[ADMIN ACTION] {timestamp} | {user_id} | {action} | {details[:100]}")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка log_admin_action: {e}")
+        return False
+
+
+async def get_admin_logs(limit: int = 50) -> List[Dict]:
+    """Получить последние логи админов"""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT user_id, action, details, created_at FROM admin_logs ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            rows = await cursor.fetchall()
+            return [{
+                "user_id": r[0],
+                "action": r[1],
+                "details": r[2],
+                "created_at": r[3]
+            } for r in rows]
+    except Exception as e:
+        logger.error(f"Ошибка get_admin_logs: {e}")
+        return []
+
+
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+async def get_db_size() -> int:
+    """Получить размер базы данных в байтах"""
+    try:
+        return os.path.getsize(DB_PATH)
+    except Exception:
+        return 0
+
+
+async def vacuum_db() -> bool:
+    """Оптимизация базы данных"""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("VACUUM")
+            logger.info("✅ База данных оптимизирована")
+            return True
+    except Exception as e:
+        logger.error(f"Ошибка vacuum_db: {e}")
+        return False
