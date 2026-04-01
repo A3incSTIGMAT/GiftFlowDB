@@ -411,12 +411,12 @@ async def handle_post_photo(message: types.Message, state: FSMContext):
 
 
 async def show_preview(message: types.Message, text: str, photo_id: Optional[str], state: FSMContext):
-    """Показ предпросмотра поста"""
+    """Показ предпросмотра поста с информацией о кнопках"""
     preview_text = text[:MAX_PREVIEW_LENGTH]
     if len(text) > MAX_PREVIEW_LENGTH:
         preview_text += f"\n\n... (ещё {len(text) - MAX_PREVIEW_LENGTH} символов)"
     
-    preview_msg = f"📢 <b>Предпросмотр поста:</b>\n\n{preview_text}"
+    preview_msg = f"📢 <b>Предпросмотр поста:</b>\n\n{preview_text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n<i>Кнопки будут добавлены автоматически:</i>\n📺 Twitch | 📷 Instagram | 🎁 Подарки"
     
     if photo_id:
         await message.answer_photo(photo_id, caption=preview_msg, parse_mode="HTML")
@@ -456,7 +456,8 @@ async def publish_post(callback: types.CallbackQuery, state: FSMContext):
     
     await callback.message.answer(
         "⚠️ <b>Подтверждение публикации</b>\n\n"
-        "Пост будет опубликован в канале.\n"
+        "Пост будет опубликован в канале с кнопками:\n"
+        "📺 Twitch | 📷 Instagram | 🎁 Подарки\n\n"
         "Нажмите ещё раз для подтверждения.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -469,7 +470,7 @@ async def publish_post(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "post_publish_confirm", AdminStates.creating_post_preview)
 async def publish_post_confirm(callback: types.CallbackQuery, state: FSMContext):
-    """Финальная публикация поста"""
+    """Финальная публикация поста с кнопками"""
     user_id = callback.from_user.id
     
     data = await state.get_data()
@@ -484,12 +485,20 @@ async def publish_post_confirm(callback: types.CallbackQuery, state: FSMContext)
     bot = get_bot()
     bot_username = (await bot.get_me()).username or "GiftFlowDB_bot"
     
-    post_text = (
-        f"{text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📺 <b>Twitch</b>: {TWITCH_URL}\n"
-        f"📷 <b>Instagram</b>: {INSTAGRAM_URL}\n"
-        f"🎁 <b>Подарки</b>: @{bot_username}"
-    )
+    # Текст поста (без ссылок в тексте)
+    post_text = f"{text}\n\n━━━━━━━━━━━━━━━━━━━━"
+    
+    # Кнопки
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📺 Twitch", url=TWITCH_URL),
+            InlineKeyboardButton(text="📷 Instagram", url=INSTAGRAM_URL),
+        ],
+        [
+            InlineKeyboardButton(text="🎁 Подарки", url=f"https://t.me/{bot_username}?start"),
+            InlineKeyboardButton(text="💬 Помощь", url=f"https://t.me/{bot_username}"),
+        ]
+    ])
     
     try:
         if photo_id:
@@ -497,18 +506,20 @@ async def publish_post_confirm(callback: types.CallbackQuery, state: FSMContext)
                 chat_id=CHANNEL_ID,
                 photo=photo_id,
                 caption=post_text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=keyboard
             )
         else:
             await bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=post_text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=keyboard
             )
         
-        await callback.message.answer("✅ Пост опубликован в канале!")
+        await callback.message.answer("✅ Пост опубликован в канале с кнопками!")
         await log_admin_action(user_id, "publish_post", f"Опубликован пост ({len(text)} символов)")
-        logger.info(f"Админ {user_id} опубликовал пост")
+        logger.info(f"Админ {user_id} опубликовал пост с кнопками")
         await state.clear()
         
     except TelegramBadRequest as e:
@@ -588,7 +599,6 @@ async def handle_gallery_photo(message: types.Message, state: FSMContext):
     
     current_state = await state.get_state()
     
-    # Если это фото для поста — игнорируем, оно обрабатывается в другом хендлере
     if current_state in (AdminStates.creating_post_photo, AdminStates.creating_post_preview, AdminStates.editing_post_photo):
         return
     
@@ -596,7 +606,6 @@ async def handle_gallery_photo(message: types.Message, state: FSMContext):
         await send_temp_message(message, "❌ Сейчас ожидается текст для подарка")
         return
     
-    # Сохраняем в галерею
     try:
         photo = message.photo[-1]
         await add_gallery_photo(photo.file_id, message.caption or "", user_id)
@@ -627,21 +636,18 @@ async def health_check(message: types.Message):
     
     status_msg = await message.answer("🔍 <b>Проверка состояния...</b>", parse_mode="HTML")
     
-    # Проверка статистики
     try:
         stats = await get_stats()
         checks["📊 Статистика"] = "✅ OK" if stats else "❌ Ошибка"
     except Exception as e:
         checks["📊 Статистика"] = f"❌ {type(e).__name__}"
     
-    # Проверка канала
     if validate_channel_id(CHANNEL_ID):
         has_perms = await check_bot_channel_permissions(CHANNEL_ID)
         checks["📺 Канал"] = "✅ OK" if has_perms else "❌ Нет прав"
     else:
         checks["📺 Канал"] = "❌ Не настроен"
     
-    # Проверка БД
     try:
         await get_stats()
         checks["💾 База данных"] = "✅ OK"
