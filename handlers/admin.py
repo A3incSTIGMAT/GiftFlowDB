@@ -3,7 +3,7 @@ from aiogram import Router, types
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 from database import is_admin, is_super_admin, add_gallery_photo, get_gallery_photos, delete_gallery_photo, add_gift, get_all_gifts, update_gift
 from keyboards import get_admin_keyboard, get_main_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_back_to_admin_keyboard
@@ -11,6 +11,18 @@ from config import SUPER_ADMIN_ID, CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+# ============ КЛАВИАТУРА ДЛЯ ПОСТА В КАНАЛЕ ============
+
+def get_channel_post_keyboard():
+    """Клавиатура для поста в канале (кнопки под постом)"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📺 Twitch", url="https://twitch.tv/")],
+        [InlineKeyboardButton(text="📷 Instagram", url="https://instagram.com/")],
+        [InlineKeyboardButton(text="🎁 Подарки", callback_data="gifts_menu")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="help_menu")]
+    ])
+    return keyboard
 
 # ============ СОЗДАНИЕ ПОСТА (FSM) ============
 
@@ -70,7 +82,7 @@ async def skip_photo(callback: types.CallbackQuery, state: FSMContext):
     
     await callback.message.answer(
         f"📢 <b>Предпросмотр поста</b>\n\n{post_text}\n\n"
-        f"⚠️ <b>Внимание:</b> Пост будет отправлен в канал.",
+        f"⚠️ <b>Внимание:</b> Пост будет отправлен в канал с кнопками.",
         parse_mode="HTML",
         reply_markup=get_confirm_post_keyboard()
     )
@@ -90,13 +102,13 @@ async def get_post_photo(message: types.Message, state: FSMContext):
     if post_photo:
         await message.answer_photo(
             post_photo,
-            caption=f"📢 <b>Предпросмотр поста</b>\n\n{post_text}\n\n⚠️ <b>Внимание:</b> Пост будет отправлен в канал.",
+            caption=f"📢 <b>Предпросмотр поста</b>\n\n{post_text}\n\n⚠️ <b>Внимание:</b> Пост будет отправлен в канал с кнопками.",
             parse_mode="HTML",
             reply_markup=get_confirm_post_keyboard()
         )
     else:
         await message.answer(
-            f"📢 <b>Предпросмотр поста</b>\n\n{post_text}\n\n⚠️ <b>Внимание:</b> Пост будет отправлен в канал.",
+            f"📢 <b>Предпросмотр поста</b>\n\n{post_text}\n\n⚠️ <b>Внимание:</b> Пост будет отправлен в канал с кнопками.",
             parse_mode="HTML",
             reply_markup=get_confirm_post_keyboard()
         )
@@ -111,31 +123,39 @@ async def invalid_post_photo(message: types.Message):
 
 @router.callback_query(lambda c: c.data == "confirm_post")
 async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
-    """Подтверждение публикации поста"""
+    """Подтверждение публикации поста с кнопками"""
     data = await state.get_data()
     post_text = data.get('post_text', '')
     post_photo = data.get('post_photo')
     
+    # Получаем клавиатуру с кнопками для канала
+    channel_keyboard = get_channel_post_keyboard()
+    
     try:
         if post_photo:
+            # Отправляем фото с подписью и КНОПКАМИ
             await callback.bot.send_photo(
                 CHANNEL_ID,
                 post_photo,
                 caption=post_text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=channel_keyboard  # ВОТ ЗДЕСЬ КНОПКИ
             )
         else:
+            # Отправляем текст с КНОПКАМИ
             await callback.bot.send_message(
                 CHANNEL_ID,
                 post_text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=channel_keyboard  # ВОТ ЗДЕСЬ КНОПКИ
             )
         
         await callback.message.edit_text(
-            "✅ <b>Пост успешно опубликован в канале!</b>",
+            "✅ <b>Пост успешно опубликован в канале с кнопками!</b>\n\n"
+            "Кнопки: Twitch, Instagram, Подарки, Помощь",
             parse_mode="HTML"
         )
-        await callback.answer("Пост опубликован!")
+        await callback.answer("Пост опубликован с кнопками!")
         
     except Exception as e:
         logger.error(f"Ошибка публикации поста: {e}")
