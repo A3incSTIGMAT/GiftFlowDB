@@ -6,6 +6,9 @@ SUPPORT_ADMIN_ID = int(os.getenv("SUPPORT_ADMIN_ID", "0"))
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 DB_PATH = os.getenv("DB_PATH", "/app/gift_bot.db")
 
+# Список администраторов (для совместимости со старым кодом)
+ADMIN_IDS = [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]
+
 # Проверка обязательных переменных
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан в переменных окружения!")
