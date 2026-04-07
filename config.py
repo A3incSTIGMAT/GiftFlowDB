@@ -13,6 +13,12 @@ ADMIN_IDS = [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]
 TWITCH_URL = "https://twitch.tv/lana"
 INSTAGRAM_URL = "https://instagram.com/lana"
 
+# ============ ПЛАТЁЖНЫЕ ДАННЫЕ (ОЗОН БАНК) ============
+OZON_CARD_LAST = os.getenv("OZON_CARD_LAST", "4436")
+OZON_BANK_NAME = os.getenv("OZON_BANK_NAME", "Озон Банк")
+OZON_RECEIVER = os.getenv("OZON_RECEIVER", "Александр Б.")
+OZON_SBP_QR_URL = os.getenv("OZON_SBP_QR_URL", "019d2edd-64d5-7781-87ea-fea6bf40d6cf")
+
 # Проверка обязательных переменных
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан в переменных окружения!")
