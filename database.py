@@ -114,6 +114,21 @@ async def init_db():
                 )
             """)
             
+            # === ТАБЛИЦА ТОП ГЕРОЕВ ===
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS top_heroes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    username TEXT,
+                    total_amount INTEGER DEFAULT 0,
+                    month_year TEXT,
+                    rank INTEGER DEFAULT 0,
+                    reward_given INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, month_year)
+                )
+            """)
+            
             await db.commit()
             logger.info(f"✅ База данных инициализирована: {DB_PATH}")
         
@@ -439,9 +454,7 @@ async def delete_gallery_photo(photo_id: str) -> bool:
 
 # ========== ЛОГИ АДМИНОВ ==========
 async def log_admin_action(user_id: int, action: str, details: str = "") -> bool:
-    """
-    Логирование действий администраторов
-    """
+    """Логирование действий администраторов"""
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
@@ -476,6 +489,88 @@ async def get_admin_logs(limit: int = 50) -> List[Dict]:
     except Exception as e:
         logger.error(f"Ошибка get_admin_logs: {e}")
         return []
+
+
+# ========== ТОП ГЕРОЕВ КАНАЛА ==========
+async def update_top_hero(user_id: int, username: str, amount: int):
+    """Обновление суммы донатов пользователя за текущий месяц"""
+    from datetime import datetime
+    month_year = datetime.now().strftime("%Y-%m")
+    
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("""
+                INSERT INTO top_heroes (user_id, username, total_amount, month_year)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id, month_year) DO UPDATE SET
+                    total_amount = total_amount + ?,
+                    username = ?,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (user_id, username, amount, month_year, amount, username))
+            await db.commit()
+            logger.info(f"✅ Топ героев обновлён: {username} (+{amount}₽)")
+    except Exception as e:
+        logger.error(f"Ошибка update_top_hero: {e}")
+
+
+async def get_top_heroes(limit: int = 10) -> list:
+    """Получить топ донатеров за текущий месяц"""
+    from datetime import datetime
+    month_year = datetime.now().strftime("%Y-%m")
+    
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("""
+                SELECT user_id, username, total_amount
+                FROM top_heroes
+                WHERE month_year = ?
+                ORDER BY total_amount DESC
+                LIMIT ?
+            """, (month_year, limit))
+            rows = await cursor.fetchall()
+            return [{"user_id": r[0], "username": r[1], "total_amount": r[2]} for r in rows]
+    except Exception as e:
+        logger.error(f"Ошибка get_top_heroes: {e}")
+        return []
+
+
+async def get_monthly_stats() -> dict:
+    """Получить статистику за месяц"""
+    from datetime import datetime
+    month_year = datetime.now().strftime("%Y-%m")
+    
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("""
+                SELECT SUM(amount), COUNT(DISTINCT user_id)
+                FROM transactions
+                WHERE status = 'completed' AND strftime('%Y-%m', created_at) = ?
+            """, (month_year,))
+            row = await cursor.fetchone()
+            return {
+                "total_monthly": row[0] or 0,
+                "unique_donors": row[1] or 0
+            }
+    except Exception as e:
+        logger.error(f"Ошибка get_monthly_stats: {e}")
+        return {"total_monthly": 0, "unique_donors": 0}
+
+
+async def reset_monthly_top():
+    """Сброс топа в начале месяца (вызывать вручную или по расписанию)"""
+    from datetime import datetime
+    current_month = datetime.now().strftime("%Y-%m")
+    
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            # Удаляем записи за предыдущие месяцы (оставляем текущий)
+            await db.execute("""
+                DELETE FROM top_heroes WHERE month_year != ?
+            """, (current_month,))
+            await db.commit()
+            logger.info("✅ Топ героев сброшен на новый месяц")
+    except Exception as e:
+        logger.error(f"Ошибка reset_monthly_top: {e}")
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
