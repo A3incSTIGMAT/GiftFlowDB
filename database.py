@@ -1,594 +1,541 @@
+import sqlite3
 import aiosqlite
-import os
-import logging
 import asyncio
-from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
-from config import DB_PATH
+import logging
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
+from config import DB_PATH, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
 
 logger = logging.getLogger(__name__)
 
-# Кэш для статистики
-_stats_cache: Dict[str, Any] = {"data": None, "timestamp": 0}
+# ============ ПОДКЛЮЧЕНИЕ К БД ============
 
-
-async def ensure_db_directory():
-    """Создаёт папку для базы данных, если её нет"""
-    db_dir = os.path.dirname(DB_PATH)
-    if db_dir and not os.path.exists(db_dir):
-        try:
-            os.makedirs(db_dir, exist_ok=True)
-            logger.info(f"✅ Создана папка для БД: {db_dir}")
-        except Exception as e:
-            logger.error(f"❌ Не удалось создать папку {db_dir}: {e}")
-            raise
-
+async def get_db():
+    """Получение соединения с БД"""
+    return aiosqlite.connect(DB_PATH)
 
 async def init_db():
-    """Инициализация базы данных со всеми таблицами"""
-    try:
-        await ensure_db_directory()
+    """Инициализация базы данных: создание всех таблиц"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Таблица пользователей
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER UNIQUE NOT NULL,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_active TIMESTAMP
+            )
+        """)
         
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("PRAGMA foreign_keys = ON")
-            await db.execute("PRAGMA journal_mode = WAL")
+        # Таблица подарков
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS gifts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                price INTEGER NOT NULL,
+                icon TEXT DEFAULT '🎁',
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Таблица транзакций (заказов)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                gift_id INTEGER NOT NULL,
+                gift_name TEXT,
+                amount INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
+                payment_method TEXT,
+                payment_details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                confirmed_at TIMESTAMP,
+                confirmed_by INTEGER,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (gift_id) REFERENCES gifts(id)
+            )
+        """)
+        
+        # Таблица топ героев (кэш донатеров)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS top_heroes (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                total_amount INTEGER DEFAULT 0,
+                last_donate TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Таблица галереи
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS gallery (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id TEXT NOT NULL,
+                description TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Таблица администраторов
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER UNIQUE NOT NULL,
+                username TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Таблица логов действий админов
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admin_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Индексы для ускорения запросов
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_top_heroes_amount ON top_heroes(total_amount DESC)")
+        
+        await db.commit()
+        
+        # Добавляем начальные подарки, если их нет
+        await init_default_gifts()
+        
+        logger.info("✅ База данных инициализирована")
+
+async def init_default_gifts():
+    """Добавление стандартных подарков, если таблица пуста"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM gifts")
+        count = await cursor.fetchone()
+        
+        if count[0] == 0:
+            default_gifts = [
+                ("Чиби-арт", "Милая аватарка с Ланой в чиби-стиле", 500, "🎨"),
+                ("Скринсейвер", "Эксклюзивный скринсейвер для телефона", 1000, "📱"),
+                ("Видеопривет", "Лана запишет личное видео-приветствие", 3000, "🎥"),
+                ("Татушка", "Настоящая татуировка от Ланы", 15000, "💉"),
+                ("Косплей на стрим", "Лана сделает косплей по твоему заказу", 20000, "🎭"),
+                ("Нож в КС", "Скин для Counter-Strike", 25000, "🔪"),
+                ("Именной стрим", "Стрим с твоим ником в названии", 50000, "🎮"),
+                ("НА МЕЧТУ", "Поддержка новой мечты Ланы", 150000, "💫"),
+            ]
             
-            # === ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ===
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    last_name TEXT,
-                    is_admin INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # === ТАБЛИЦА ПОДАРКОВ ===
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS gifts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    price INTEGER NOT NULL,
-                    description TEXT,
-                    icon TEXT DEFAULT '🎁',
-                    category TEXT,
-                    sort_order INTEGER DEFAULT 0,
-                    is_active INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # === ТАБЛИЦА ТРАНЗАКЦИЙ ===
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    username TEXT,
-                    gift_id INTEGER,
-                    gift_name TEXT,
-                    amount INTEGER NOT NULL,
-                    payment_id TEXT,
-                    payment_system TEXT DEFAULT 'ozon',
-                    status TEXT DEFAULT 'pending',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    completed_at TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
-                )
-            """)
-            
-            # === ТАБЛИЦА ГАЛЕРЕИ ===
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS gallery (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    photo_id TEXT NOT NULL,
-                    caption TEXT,
-                    created_by INTEGER,
-                    is_active INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
-                )
-            """)
-            
-            # === ТАБЛИЦА СТАТИСТИКИ ===
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS stats (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    key TEXT UNIQUE NOT NULL,
-                    value TEXT,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # === ТАБЛИЦА ЛОГОВ АДМИНОВ ===
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS admin_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    action TEXT,
-                    details TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # === ТАБЛИЦА ТОП ГЕРОЕВ ===
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS top_heroes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    username TEXT,
-                    total_amount INTEGER DEFAULT 0,
-                    month_year TEXT,
-                    rank INTEGER DEFAULT 0,
-                    reward_given INTEGER DEFAULT 0,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, month_year)
-                )
-            """)
+            for name, desc, price, icon in default_gifts:
+                await db.execute("""
+                    INSERT INTO gifts (name, description, price, icon)
+                    VALUES (?, ?, ?, ?)
+                """, (name, desc, price, icon))
             
             await db.commit()
-            logger.info(f"✅ База данных инициализирована: {DB_PATH}")
+            logger.info(f"✅ Добавлено {len(default_gifts)} подарков в базу")
+
+# ============ ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ============
+
+async def register_user(user_id: int, username: str = None, first_name: str = None, last_name: str = None):
+    """Регистрация или обновление пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, last_active)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, username, first_name, last_name, datetime.now()))
+        await db.commit()
+
+async def update_user_activity(user_id: int):
+    """Обновление времени последней активности"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE users SET last_active = ? WHERE user_id = ?
+        """, (datetime.now(), user_id))
+        await db.commit()
+
+# ============ ФУНКЦИИ ДЛЯ ПОДАРКОВ ============
+
+async def get_all_gifts(active_only: bool = True) -> List[Dict[str, Any]]:
+    """Получить все подарки"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        if active_only:
+            cursor = await db.execute("SELECT * FROM gifts WHERE is_active = 1 ORDER BY price")
+        else:
+            cursor = await db.execute("SELECT * FROM gifts ORDER BY price")
         
-        await init_gifts()
-        await update_stats_cache()
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при инициализации БД: {e}")
-        raise
-
-
-async def init_gifts():
-    """Заполнение подарков при пустой таблице"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT COUNT(*) FROM gifts WHERE is_active = 1")
-            count = (await cursor.fetchone())[0]
-            
-            if count == 0:
-                gifts = [
-                    # МИКРО-ДОНАТЫ (10-100₽)
-                    ("🍬 Конфетка", 10, "Маленькая сладость для настроения 🍬", "🍬", "micro"),
-                    ("❤️ Лайк в чат", 20, "Лайк в прямом эфире! ❤️", "❤️", "micro"),
-                    ("🍪 Печенька", 30, "К чайку в перерыве 🍪", "🍪", "micro"),
-                    ("🧸 Обнимашка", 50, "Тёплый виртуальный хаг 🧸", "🧸", "micro"),
-                    ("☕ Мини-кофе", 50, "Маленькая порция бодрости ☕", "☕", "micro"),
-                    ("🎵 Заказ трека", 75, "Любую песню на стрим 🎵", "🎵", "micro"),
-                    ("😺 Корм Марсику", 100, "Котику на вкусняшки 🐱", "😺", "pet"),
-                    ("📢 Упоминание", 100, "Твой ник в прямом эфире! 📢", "📢", "micro"),
-                    
-                    # СРЕДНИЕ ДОНАТЫ (150-500₽)
-                    ("☕ Кофеек", 150, "Чашечка ароматного кофе ☕", "☕", "food"),
-                    ("🎮 Выбор карты", 150, "Ты выбираешь следующую карту в CS 🎮", "🎮", "game"),
-                    ("📷 Фото в сторис", 200, "Твоё имя в Instagram Stories 📷", "📷", "content"),
-                    ("🎲 Кинуть кубик", 200, "Стримерша выполняет случайное действие 🎲", "🎲", "game"),
-                    ("🎁 Кейс в КС", 300, "Открываем кейс вместе! 🎁", "🎁", "game"),
-                    ("🔥 Панчлайн", 350, "Смешная фраза в твою честь 🔥", "🔥", "default"),
-                    ("🐱 Игрушка Марсику", 400, "Новая игрушка для котика 🐱", "🐱", "pet"),
-                    ("🎬 Реакция на мем", 500, "Стримерша реагирует на твой мем 🎬", "🎬", "content"),
-                    
-                    # ОСТАЛЬНЫЕ ПОДАРКИ
-                    ("По приколу", 222, "Просто так, для настроения", "🎲", "default"),
-                    ("Вкусняшки Марсику", 1111, "Коту на вкусняшки 🐱", "🍖", "pet"),
-                    ("Вклад в биполярку", 1222, "Поддержка ментального здоровья 💊", "💊", "default"),
-                    ("Новые фотки", 1555, "Эксклюзивные фото в подарок 📸", "📸", "content"),
-                    ("Пакет киндеров", 2000, "Сюрприз для сладкоежек 🍫", "🍫", "food"),
-                    ("Двойной пакет киндеров", 3333, "Двойная порция сюрприза 🍫🍫", "🍫", "food"),
-                    ("На психушку", 4444, "Запасной план 🏥", "🏥", "default"),
-                    ("На кофточку", 5000, "Обновка в гардероб 👕", "👕", "clothes"),
-                    ("Продать душу дьяволу", 6666, "Рискованное вложение 😈", "😈", "special"),
-                    ("На кейсики в КС", 10000, "Кейсы, кейсы, кейсы 🎁", "🎁", "game"),
-                    ("Татушка", 15000, "Новая татуировка 🖤", "🖤", "special"),
-                    ("Косплей на стрим", 20000, "Косплей в следующий стрим 🎭", "🎭", "content"),
-                    ("Нож в КС", 25000, "Красивый нож для красивых фрагов 🔪", "🔪", "game"),
-                    ("НА МЕЧТУ", 150000, "Самый крупный вклад в мечту ✨", "✨", "special")
-                ]
-                
-                for idx, (name, price, desc, icon, category) in enumerate(gifts):
-                    await db.execute(
-                        """INSERT INTO gifts (name, price, description, icon, category, sort_order, is_active) 
-                           VALUES (?, ?, ?, ?, ?, ?, 1)""",
-                        (name, price, desc, icon, category, idx)
-                    )
-                await db.commit()
-                logger.info(f"✅ Добавлено {len(gifts)} подарков в базу")
-                
-    except Exception as e:
-        logger.error(f"❌ Ошибка при инициализации подарков: {e}")
-
-
-# ========== ПОЛЬЗОВАТЕЛИ ==========
-async def get_user(user_id: int) -> Optional[Dict]:
-    """Получить пользователя по ID"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                "SELECT id, username, first_name, last_name, is_admin, created_at FROM users WHERE id = ?",
-                (user_id,)
-            )
-            row = await cursor.fetchone()
-            if row:
-                return {
-                    "id": row[0],
-                    "username": row[1],
-                    "first_name": row[2],
-                    "last_name": row[3],
-                    "is_admin": row[4],
-                    "created_at": row[5]
-                }
-            return None
-    except Exception as e:
-        logger.error(f"Ошибка get_user: {e}")
-        return None
-
-
-async def add_user(user_id: int, username: str = None, first_name: str = None, last_name: str = None):
-    """Добавить или обновить пользователя"""
-    try:
-        from config import ADMIN_IDS
-        
-        is_admin = 1 if user_id in ADMIN_IDS else 0
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                """INSERT OR REPLACE INTO users (id, username, first_name, last_name, is_admin, updated_at) 
-                   VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
-                (user_id, username, first_name, last_name, is_admin)
-            )
-            await db.commit()
-            logger.info(f"✅ Пользователь {user_id} добавлен/обновлён")
-    except Exception as e:
-        logger.error(f"Ошибка add_user: {e}")
-
-
-# ========== ПОДАРКИ ==========
-async def get_all_gifts() -> List[Dict]:
-    """Получить все активные подарки"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                "SELECT id, name, price, description, icon FROM gifts WHERE is_active = 1 ORDER BY sort_order, price"
-            )
-            rows = await cursor.fetchall()
-            return [{"id": r[0], "name": r[1], "price": r[2], "description": r[3], "icon": r[4]} for r in rows]
-    except Exception as e:
-        logger.error(f"Ошибка get_all_gifts: {e}")
-        return []
-
-
-async def get_gift_by_id(gift_id: int) -> Optional[Dict]:
-    """Получить подарок по ID"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                "SELECT id, name, price, description, icon FROM gifts WHERE id = ? AND is_active = 1",
-                (gift_id,)
-            )
-            row = await cursor.fetchone()
-            if row:
-                return {
-                    "id": row[0],
-                    "name": row[1],
-                    "price": row[2],
-                    "description": row[3],
-                    "icon": row[4]
-                }
-            return None
-    except Exception as e:
-        logger.error(f"Ошибка get_gift_by_id: {e}")
-        return None
-
-
-async def add_gift(name: str, price: int, description: str, icon: str = "🎁", category: str = "default") -> bool:
-    """Добавить новый подарок"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT MAX(sort_order) FROM gifts")
-            max_order = (await cursor.fetchone())[0] or 0
-            new_order = max_order + 1
-            
-            await db.execute(
-                """INSERT INTO gifts (name, price, description, icon, category, sort_order, is_active) 
-                   VALUES (?, ?, ?, ?, ?, ?, 1)""",
-                (name, price, description, icon, category, new_order)
-            )
-            await db.commit()
-            logger.info(f"✅ Добавлен новый подарок: {name} ({price}₽)")
-            return True
-    except Exception as e:
-        logger.error(f"Ошибка add_gift: {e}")
-        return False
-
-
-# ========== ТРАНЗАКЦИИ ==========
-async def add_transaction(user_id: int, username: str, gift_id: int, gift_name: str, amount: int, payment_id: str = None) -> Optional[int]:
-    """Добавить транзакцию"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                """INSERT INTO transactions (user_id, username, gift_id, gift_name, amount, payment_id, status, completed_at) 
-                   VALUES (?, ?, ?, ?, ?, ?, 'completed', CURRENT_TIMESTAMP)""",
-                (user_id, username, gift_id, gift_name, amount, payment_id)
-            )
-            await db.commit()
-            transaction_id = cursor.lastrowid
-            logger.info(f"✅ Транзакция {transaction_id} добавлена: {amount}₽ от {username}")
-            await update_stats_cache()
-            return transaction_id
-    except Exception as e:
-        logger.error(f"Ошибка add_transaction: {e}")
-        return None
-
-
-async def get_all_transactions(limit: int = 50) -> List[Dict]:
-    """Получить последние транзакции"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                """SELECT user_id, username, gift_name, amount, status, created_at, completed_at 
-                   FROM transactions ORDER BY created_at DESC LIMIT ?""",
-                (limit,)
-            )
-            rows = await cursor.fetchall()
-            return [{
-                "user_id": r[0],
-                "username": r[1],
-                "gift_name": r[2],
-                "amount": r[3],
-                "status": r[4],
-                "created_at": r[5],
-                "completed_at": r[6]
-            } for r in rows]
-    except Exception as e:
-        logger.error(f"Ошибка get_all_transactions: {e}")
-        return []
-
-
-# ========== СТАТИСТИКА ==========
-async def get_stats() -> Dict[str, Any]:
-    """Получить статистику"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'completed'")
-            total_orders = (await cursor.fetchone())[0]
-            
-            cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'completed'")
-            total_amount = (await cursor.fetchone())[0] or 0
-            
-            cursor = await db.execute("SELECT COUNT(*) FROM users")
-            total_users = (await cursor.fetchone())[0]
-            
-            return {
-                "total_orders": total_orders,
-                "total_amount": total_amount,
-                "total_users": total_users
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "price": row[3],
+                "icon": row[4],
+                "is_active": row[5],
+                "created_at": row[6]
             }
-    except Exception as e:
-        logger.error(f"Ошибка get_stats: {e}")
-        return {"total_orders": 0, "total_amount": 0, "total_users": 0}
+            for row in rows
+        ]
 
-
-async def update_stats_cache() -> Optional[Dict]:
-    """Обновление кэша статистики"""
-    global _stats_cache
-    try:
-        stats = await get_stats()
-        _stats_cache["data"] = stats
-        _stats_cache["timestamp"] = asyncio.get_event_loop().time()
-        logger.info("✅ Кэш статистики обновлён")
-        return stats
-    except Exception as e:
-        logger.error(f"Ошибка обновления кэша статистики: {e}")
+async def get_gift_by_id(gift_id: int) -> Optional[Dict[str, Any]]:
+    """Получить подарок по ID"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT * FROM gifts WHERE id = ?", (gift_id,))
+        row = await cursor.fetchone()
+        
+        if row:
+            return {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "price": row[3],
+                "icon": row[4],
+                "is_active": row[5],
+                "created_at": row[6]
+            }
         return None
 
+async def add_gift(name: str, price: int, description: str = "", icon: str = "🎁") -> int:
+    """Добавить новый подарок"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            INSERT INTO gifts (name, description, price, icon)
+            VALUES (?, ?, ?, ?)
+        """, (name, description, price, icon))
+        await db.commit()
+        return cursor.lastrowid
 
-def get_stats_cached() -> Optional[Dict]:
-    """Получение статистики из кэша"""
-    if _stats_cache["data"] and (asyncio.get_event_loop().time() - _stats_cache["timestamp"]) < 300:
-        return _stats_cache["data"]
+async def update_gift(gift_id: int, **kwargs):
+    """Обновить информацию о подарке"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        fields = []
+        values = []
+        for key, value in kwargs.items():
+            fields.append(f"{key} = ?")
+            values.append(value)
+        
+        if fields:
+            query = f"UPDATE gifts SET {', '.join(fields)} WHERE id = ?"
+            values.append(gift_id)
+            await db.execute(query, values)
+            await db.commit()
+
+# ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ (ЗАКАЗОВ) ============
+
+async def create_transaction(user_id: int, gift_id: int, amount: int, gift_name: str) -> int:
+    """Создать новую транзакцию"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            INSERT INTO transactions (user_id, gift_id, gift_name, amount, status)
+            VALUES (?, ?, ?, ?, 'pending')
+        """, (user_id, gift_id, gift_name, amount))
+        await db.commit()
+        return cursor.lastrowid
+
+async def update_transaction_status(transaction_id: int, status: str, confirmed_by: int = None):
+    """Обновить статус транзакции"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE transactions 
+            SET status = ?, confirmed_at = ?, confirmed_by = ?
+            WHERE id = ?
+        """, (status, datetime.now() if status == 'paid' else None, confirmed_by, transaction_id))
+        await db.commit()
+
+async def get_pending_transactions(limit: int = 50) -> List[Dict[str, Any]]:
+    """Получить ожидающие подтверждения транзакции"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT t.*, u.username, u.first_name
+            FROM transactions t
+            LEFT JOIN users u ON t.user_id = u.user_id
+            WHERE t.status = 'pending'
+            ORDER BY t.created_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cursor.fetchall()
+        
+        transactions = []
+        for row in rows:
+            transactions.append({
+                "id": row[0],
+                "user_id": row[1],
+                "gift_id": row[2],
+                "gift_name": row[3],
+                "amount": row[4],
+                "status": row[5],
+                "payment_method": row[6],
+                "payment_details": row[7],
+                "created_at": row[8],
+                "confirmed_at": row[9],
+                "confirmed_by": row[10],
+                "username": row[11] if len(row) > 11 else None,
+                "first_name": row[12] if len(row) > 12 else None,
+            })
+        return transactions
+
+async def get_all_transactions(limit: int = 100) -> List[Dict[str, Any]]:
+    """Получить все транзакции"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT t.*, u.username
+            FROM transactions t
+            LEFT JOIN users u ON t.user_id = u.user_id
+            ORDER BY t.created_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cursor.fetchall()
+        
+        return [
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "gift_id": row[2],
+                "gift_name": row[3],
+                "amount": row[4],
+                "status": row[5],
+                "created_at": row[8],
+                "username": row[11] if len(row) > 11 else None,
+            }
+            for row in rows
+        ]
+
+# ============ ФУНКЦИИ ДЛЯ ТОПА ГЕРОЕВ ============
+
+async def update_top_heroes(user_id: int, amount: int, username: str = None):
+    """Обновить топ героев после доната"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Проверяем, существует ли пользователь в топе
+        cursor = await db.execute("SELECT total_amount FROM top_heroes WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        
+        if row:
+            # Обновляем существующего
+            new_total = row[0] + amount
+            await db.execute("""
+                UPDATE top_heroes 
+                SET total_amount = ?, last_donate = ?, updated_at = ?, username = COALESCE(?, username)
+                WHERE user_id = ?
+            """, (new_total, datetime.now(), datetime.now(), username, user_id))
+        else:
+            # Добавляем нового
+            await db.execute("""
+                INSERT INTO top_heroes (user_id, username, total_amount, last_donate)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, username, amount, datetime.now()))
+        
+        await db.commit()
+        
+        # Проверяем, вошёл ли пользователь в топ-3
+        cursor = await db.execute("""
+            SELECT user_id, total_amount FROM top_heroes 
+            ORDER BY total_amount DESC 
+            LIMIT 3
+        """)
+        top3 = await cursor.fetchall()
+        
+        # Возвращаем позицию пользователя в топе
+        for i, (uid, _) in enumerate(top3):
+            if uid == user_id:
+                return i + 1  # 1, 2 или 3
+        return None
+
+async def get_top_heroes(limit: int = 10) -> List[Dict[str, Any]]:
+    """Получить топ героев"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT user_id, username, total_amount, last_donate
+            FROM top_heroes 
+            ORDER BY total_amount DESC 
+            LIMIT ?
+        """, (limit,))
+        rows = await cursor.fetchall()
+        
+        return [
+            {
+                "user_id": row[0],
+                "username": row[1],
+                "total_amount": row[2],
+                "last_donate": row[3]
+            }
+            for row in rows
+        ]
+
+async def get_user_rank(user_id: int) -> Optional[int]:
+    """Получить место пользователя в топе"""
+    heroes = await get_top_heroes(limit=100)
+    for i, hero in enumerate(heroes):
+        if hero["user_id"] == user_id:
+            return i + 1
     return None
 
+# ============ ФУНКЦИИ ДЛЯ ГАЛЕРЕИ ============
 
-async def clear_transactions() -> bool:
-    """Очистить все транзакции (только для супер-админа)"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM transactions")
-            await db.commit()
-            logger.warning("⚠️ Все транзакции удалены")
-            await update_stats_cache()
-            return True
-    except Exception as e:
-        logger.error(f"Ошибка clear_transactions: {e}")
-        return False
-
-
-# ========== ГАЛЕРЕЯ ==========
-async def add_gallery_photo(photo_id: str, caption: str, created_by: int) -> bool:
+async def add_gallery_photo(file_id: str, description: str = "", added_by: int = None) -> int:
     """Добавить фото в галерею"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO gallery (photo_id, caption, created_by, is_active) VALUES (?, ?, ?, 1)",
-                (photo_id, caption, created_by)
-            )
-            await db.commit()
-            logger.info(f"✅ Фото добавлено в галерею: {photo_id}")
-            return True
-    except Exception as e:
-        logger.error(f"Ошибка add_gallery_photo: {e}")
-        return False
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            INSERT INTO gallery (file_id, description, added_by)
+            VALUES (?, ?, ?)
+        """, (file_id, description, added_by))
+        await db.commit()
+        return cursor.lastrowid
 
-
-async def get_gallery_photos(limit: int = 20) -> List[Tuple[str, str, str]]:
+async def get_gallery_photos(limit: int = 50) -> List[Dict[str, Any]]:
     """Получить фото из галереи"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                "SELECT photo_id, caption, created_at FROM gallery WHERE is_active = 1 ORDER BY created_at DESC LIMIT ?",
-                (limit,)
-            )
-            return await cursor.fetchall()
-    except Exception as e:
-        logger.error(f"Ошибка get_gallery_photos: {e}")
-        return []
-
-
-async def delete_gallery_photo(photo_id: str) -> bool:
-    """Удалить фото из галереи (мягкое удаление)"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "UPDATE gallery SET is_active = 0 WHERE photo_id = ?",
-                (photo_id,)
-            )
-            await db.commit()
-            logger.info(f"✅ Фото удалено из галереи: {photo_id}")
-            return True
-    except Exception as e:
-        logger.error(f"Ошибка delete_gallery_photo: {e}")
-        return False
-
-
-# ========== ЛОГИ АДМИНОВ ==========
-async def log_admin_action(user_id: int, action: str, details: str = "") -> bool:
-    """Логирование действий администраторов"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO admin_logs (user_id, action, details) VALUES (?, ?, ?)",
-                (user_id, action, details[:500])
-            )
-            await db.commit()
-            
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(f"[ADMIN ACTION] {timestamp} | {user_id} | {action} | {details[:100]}")
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка log_admin_action: {e}")
-        return False
-
-
-async def get_admin_logs(limit: int = 50) -> List[Dict]:
-    """Получить последние логи админов"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                "SELECT user_id, action, details, created_at FROM admin_logs ORDER BY created_at DESC LIMIT ?",
-                (limit,)
-            )
-            rows = await cursor.fetchall()
-            return [{
-                "user_id": r[0],
-                "action": r[1],
-                "details": r[2],
-                "created_at": r[3]
-            } for r in rows]
-    except Exception as e:
-        logger.error(f"Ошибка get_admin_logs: {e}")
-        return []
-
-
-# ========== ТОП ГЕРОЕВ КАНАЛА ==========
-async def update_top_hero(user_id: int, username: str, amount: int):
-    """Обновление суммы донатов пользователя за текущий месяц"""
-    from datetime import datetime
-    month_year = datetime.now().strftime("%Y-%m")
-    
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("""
-                INSERT INTO top_heroes (user_id, username, total_amount, month_year)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(user_id, month_year) DO UPDATE SET
-                    total_amount = total_amount + ?,
-                    username = ?,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (user_id, username, amount, month_year, amount, username))
-            await db.commit()
-            logger.info(f"✅ Топ героев обновлён: {username} (+{amount}₽)")
-    except Exception as e:
-        logger.error(f"Ошибка update_top_hero: {e}")
-
-
-async def get_top_heroes(limit: int = 10) -> list:
-    """Получить топ донатеров за текущий месяц"""
-    from datetime import datetime
-    month_year = datetime.now().strftime("%Y-%m")
-    
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("""
-                SELECT user_id, username, total_amount
-                FROM top_heroes
-                WHERE month_year = ?
-                ORDER BY total_amount DESC
-                LIMIT ?
-            """, (month_year, limit))
-            rows = await cursor.fetchall()
-            return [{"user_id": r[0], "username": r[1], "total_amount": r[2]} for r in rows]
-    except Exception as e:
-        logger.error(f"Ошибка get_top_heroes: {e}")
-        return []
-
-
-async def get_monthly_stats() -> dict:
-    """Получить статистику за месяц"""
-    from datetime import datetime
-    month_year = datetime.now().strftime("%Y-%m")
-    
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("""
-                SELECT SUM(amount), COUNT(DISTINCT user_id)
-                FROM transactions
-                WHERE status = 'completed' AND strftime('%Y-%m', created_at) = ?
-            """, (month_year,))
-            row = await cursor.fetchone()
-            return {
-                "total_monthly": row[0] or 0,
-                "unique_donors": row[1] or 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT id, file_id, description, added_by, added_at
+            FROM gallery
+            ORDER BY added_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cursor.fetchall()
+        
+        return [
+            {
+                "id": row[0],
+                "file_id": row[1],
+                "description": row[2],
+                "added_by": row[3],
+                "added_at": row[4]
             }
-    except Exception as e:
-        logger.error(f"Ошибка get_monthly_stats: {e}")
-        return {"total_monthly": 0, "unique_donors": 0}
+            for row in rows
+        ]
 
+async def delete_gallery_photo(photo_id: int) -> bool:
+    """Удалить фото из галереи"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM gallery WHERE id = ?", (photo_id,))
+        await db.commit()
+        return cursor.rowcount > 0
 
-async def reset_monthly_top():
-    """Сброс топа в начале месяца (вызывать вручную или по расписанию)"""
-    from datetime import datetime
-    current_month = datetime.now().strftime("%Y-%m")
+# ============ АДМИН ФУНКЦИИ ============
+
+async def is_super_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь супер-админом"""
+    return user_id == SUPER_ADMIN_ID
+
+async def is_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь админом или менеджером"""
+    # Сначала проверяем супер-админа
+    if user_id == SUPER_ADMIN_ID:
+        return True
     
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            # Удаляем записи за предыдущие месяцы (оставляем текущий)
+    # Проверяем менеджера из конфига
+    if user_id == SUPPORT_ADMIN_ID:
+        return True
+    
+    # Проверяем в таблице admins
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        return row is not None
+
+async def add_admin(user_id: int, username: str = None) -> bool:
+    """Добавить администратора (только для супер-админа)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
             await db.execute("""
-                DELETE FROM top_heroes WHERE month_year != ?
-            """, (current_month,))
+                INSERT OR REPLACE INTO admins (user_id, username, added_by)
+                VALUES (?, ?, ?)
+            """, (user_id, username, SUPER_ADMIN_ID))
             await db.commit()
-            logger.info("✅ Топ героев сброшен на новый месяц")
-    except Exception as e:
-        logger.error(f"Ошибка reset_monthly_top: {e}")
-
-
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-async def get_db_size() -> int:
-    """Получить размер базы данных в байтах"""
-    try:
-        return os.path.getsize(DB_PATH)
-    except Exception:
-        return 0
-
-
-async def vacuum_db() -> bool:
-    """Оптимизация базы данных"""
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("VACUUM")
-            logger.info("✅ База данных оптимизирована")
             return True
-    except Exception as e:
-        logger.error(f"Ошибка vacuum_db: {e}")
-        return False
+        except Exception as e:
+            logger.error(f"Ошибка добавления админа: {e}")
+            return False
+
+async def remove_admin(user_id: int) -> bool:
+    """Удалить администратора"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+async def get_all_admins() -> List[Dict[str, Any]]:
+    """Получить список всех администраторов"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT user_id, username, added_by, added_at 
+            FROM admins 
+            ORDER BY added_at DESC
+        """)
+        rows = await cursor.fetchall()
+        return [
+            {
+                "user_id": row[0],
+                "username": row[1],
+                "added_by": row[2],
+                "added_at": row[3]
+            }
+            for row in rows
+        ]
+
+# ============ ФУНКЦИИ ДЛЯ СТАТИСТИКИ ============
+
+_cache_stats = {}
+
+async def update_stats_cache():
+    """Обновить кэш статистики"""
+    global _cache_stats
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Общее количество пользователей
+        cursor = await db.execute("SELECT COUNT(*) FROM users")
+        total_users = (await cursor.fetchone())[0]
+        
+        # Общее количество донатов
+        cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'paid'")
+        total_donations = (await cursor.fetchone())[0]
+        
+        # Общая сумма донатов
+        cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'paid'")
+        total_amount = (await cursor.fetchone())[0] or 0
+        
+        # Донаты за текущий месяц
+        first_day = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        cursor = await db.execute("""
+            SELECT SUM(amount) FROM transactions 
+            WHERE status = 'paid' AND created_at >= ?
+        """, (first_day,))
+        month_amount = (await cursor.fetchone())[0] or 0
+        
+        _cache_stats = {
+            "total_users": total_users,
+            "total_donations": total_donations,
+            "total_amount": total_amount,
+            "month_amount": month_amount,
+            "updated_at": datetime.now()
+        }
+        
+        logger.info("✅ Кэш статистики обновлён")
+        return _cache_stats
+
+async def get_stats() -> Dict[str, Any]:
+    """Получить статистику (из кэша)"""
+    global _cache_stats
+    if not _cache_stats:
+        await update_stats_cache()
+    return _cache_stats
+
+# ============ ФУНКЦИИ ДЛЯ ЛОГОВ ============
+
+async def log_admin_action(admin_id: int, action: str, details: str = None):
+    """Записать действие админа в лог"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO admin_logs (admin_id, action, details)
+            VALUES (?, ?, ?)
+        """, (admin_id, action, details))
+        await db.commit()
