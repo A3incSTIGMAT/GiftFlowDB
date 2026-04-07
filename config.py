@@ -6,8 +6,12 @@ SUPPORT_ADMIN_ID = int(os.getenv("SUPPORT_ADMIN_ID", "0"))
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 DB_PATH = os.getenv("DB_PATH", "/app/gift_bot.db")
 
-# Список администраторов (для совместимости со старым кодом)
+# Список администраторов (для совместимости)
 ADMIN_IDS = [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]
+
+# Ссылки на социальные сети
+TWITCH_URL = "https://twitch.tv/lana"
+INSTAGRAM_URL = "https://instagram.com/lana"
 
 # Проверка обязательных переменных
 if not BOT_TOKEN:
