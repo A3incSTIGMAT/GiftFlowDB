@@ -11,8 +11,8 @@ from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from config import ADMIN_IDS
-from database import add_transaction, get_gift_by_id
+from config import ADMIN_IDS, CHANNEL_ID, TWITCH_URL, INSTAGRAM_URL
+from database import add_transaction, get_gift_by_id, update_top_hero, get_top_heroes
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -24,42 +24,56 @@ def set_bot(bot_instance: Bot):
     bot = bot_instance
 
 
-# ========== КОНФИГУРАЦИЯ (ТВОИ ДАННЫЕ) ==========
-OZON_CARD_LAST4 = "4436"                    # Последние 4 цифры карты
-OZON_CARD_FULL = "2204 3210 4743 4436"      # Полный номер карты (для копирования)
-OZON_BANK_NAME = "Озон Банк"                # Название банка
-OZON_RECEIVER = "Александр Б."              # Получатель
-OZON_PHONE = "+7 995 253-89-15"             # Номер телефона для СБП
-OZON_SBP_QR_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019d2edd-64d5-7781-87ea-fea6bf40d6cf"  # Твоя ссылка
+# ========== КОНФИГУРАЦИЯ ==========
+OZON_CARD_LAST4 = "4436"
+OZON_CARD_FULL = "2204 3210 4743 4436"
+OZON_BANK_NAME = "Озон Банк"
+OZON_RECEIVER = "Александр Б."
+OZON_PHONE = "+7 995 253-89-15"
+OZON_SBP_QR_URL = "https://finance.ozon.ru/apps/sbp/ozonbankpay/019d2edd-64d5-7781-87ea-fea6bf40d6cf"
 
-# Время автоудаления сообщений (в секундах)
-AUTO_DELETE_TIME = 300  # 5 минут
+AUTO_DELETE_TIME = 300
 
-
-# Хранилище ожидающих платежей
 pending_payments: Dict[str, dict] = {}
 
 
 async def delete_message_after_delay(message: Message, delay: int = AUTO_DELETE_TIME):
-    """Удаляет сообщение через указанное время"""
     await asyncio.sleep(delay)
     try:
         await message.delete()
-    except Exception as e:
-        logger.debug(f"Не удалось удалить сообщение: {e}")
+    except Exception:
+        pass
 
 
 async def delete_messages(messages: list):
-    """Удаляет список сообщений"""
     for msg in messages:
         try:
             await msg.delete()
-        except Exception as e:
-            logger.debug(f"Не удалось удалить сообщение: {e}")
+        except Exception:
+            pass
+
+
+async def notify_top_entry(user_id: int, username: str, amount: int):
+    """Уведомление при входе в топ-3"""
+    try:
+        heroes = await get_top_heroes(limit=3)
+        for i, hero in enumerate(heroes):
+            if hero['user_id'] == user_id and i < 3:
+                medals = ["🥇", "🥈", "🥉"]
+                await bot.send_message(
+                    CHANNEL_ID,
+                    f"🎉 <b>Поздравляем!</b> {medals[i]} @{username or 'Аноним'} вошёл в топ-3 героев канала!\n\n"
+                    f"🔥 Текущий вклад: {hero['total_amount']}₽\n"
+                    f"💪 Стань первым — дари подарки через бота!",
+                    parse_mode="HTML"
+                )
+                logger.info(f"Уведомление о топ-3 отправлено для {user_id}")
+                break
+    except Exception as e:
+        logger.error(f"Ошибка отправки уведомления о топе: {e}")
 
 
 def get_payment_menu(order_id: str, amount: int, gift_name: str) -> InlineKeyboardMarkup:
-    """Меню с кнопками оплаты"""
     buttons = []
     
     if OZON_SBP_QR_URL:
@@ -87,7 +101,6 @@ def get_payment_menu(order_id: str, amount: int, gift_name: str) -> InlineKeyboa
 
 
 def get_requisites_text(order_id: str, amount: int, gift_name: str) -> str:
-    """Текст с реквизитами для перевода (с моноширным шрифтом и СБП)"""
     return f"""
 💳 <b>Реквизиты для перевода</b>
 
@@ -125,7 +138,6 @@ def get_requisites_text(order_id: str, amount: int, gift_name: str) -> str:
 
 
 def get_requisites_only() -> str:
-    """Только реквизиты (без номера заказа)"""
     return f"""
 💳 <b>Реквизиты для перевода</b>
 
@@ -142,9 +154,7 @@ def get_requisites_only() -> str:
 """
 
 
-# ========== СОЗДАНИЕ ПЛАТЕЖА ДЛЯ ПОДАРКА ==========
 async def create_gift_payment(user_id: int, username: str, gift_id: int, gift_name: str, amount: int) -> str:
-    """Создаёт платёж для подарка и возвращает order_id"""
     order_id = f"GIFT_{user_id}_{int(time.time())}_{secrets.token_hex(4)}"
     
     pending_payments[order_id] = {
@@ -154,15 +164,13 @@ async def create_gift_payment(user_id: int, username: str, gift_id: int, gift_na
         "gift_name": gift_name,
         "amount": amount,
         "status": "pending",
-        "created_at": time.time(),
-        "messages": []  # Для хранения ID сообщений для автоудаления
+        "created_at": time.time()
     }
     
     return order_id
 
 
 async def send_payment_message(message: Message, gift_id: int, gift_name: str, amount: int):
-    """Отправляет сообщение с оплатой"""
     order_id = await create_gift_payment(
         message.from_user.id,
         message.from_user.username,
@@ -171,8 +179,7 @@ async def send_payment_message(message: Message, gift_id: int, gift_name: str, a
         amount
     )
     
-    # Отправляем основное сообщение
-    main_msg = await message.answer(
+    await message.answer(
         f"🎁 <b>Оплата подарка: {gift_name}</b>\n\n"
         f"💰 Сумма: {amount} ₽\n"
         f"📝 Номер заказа: <code>{order_id}</code>\n\n"
@@ -181,56 +188,16 @@ async def send_payment_message(message: Message, gift_id: int, gift_name: str, a
         parse_mode="HTML",
         reply_markup=get_payment_menu(order_id, amount, gift_name)
     )
-    
-    # Сохраняем ID сообщения для автоудаления
-    pending_payments[order_id]["main_message_id"] = main_msg.message_id
-    pending_payments[order_id]["chat_id"] = message.chat.id
-    
-    # Запускаем таймер на удаление
-    asyncio.create_task(auto_delete_payment(order_id, main_msg, message.chat.id))
 
 
-async def auto_delete_payment(order_id: str, main_msg: Message, chat_id: int):
-    """Автоматическое удаление сообщения о платеже через заданное время"""
-    await asyncio.sleep(AUTO_DELETE_TIME)
-    
-    if order_id in pending_payments:
-        try:
-            # Удаляем основное сообщение
-            await main_msg.delete()
-            
-            # Уведомляем пользователя об истечении времени
-            user_id = pending_payments[order_id]["user_id"]
-            try:
-                await bot.send_message(
-                    user_id,
-                    f"⏰ <b>Время на оплату истекло</b>\n\n"
-                    f"🎁 Подарок: {pending_payments[order_id]['gift_name']}\n"
-                    f"📝 Заказ: <code>{order_id}</code>\n\n"
-                    f"Если вы хотите приобрести подарок, создайте новый заказ.",
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass
-            
-            # Удаляем из хранилища
-            del pending_payments[order_id]
-            
-        except Exception as e:
-            logger.debug(f"Ошибка автоудаления: {e}")
-
-
-# ========== КОМАНДЫ ==========
 @router.message(Command("requisites"))
 async def cmd_requisites(message: Message):
-    """Команда /requisites — показать только реквизиты"""
     msg = await message.answer(get_requisites_only(), parse_mode="HTML")
-    asyncio.create_task(delete_message_after_delay(msg))
+    asyncio.create_task(delete_message_after_delay(msg, 60))
 
 
 @router.message(Command("qr"))
 async def cmd_qr(message: Message):
-    """Команда /qr — показать QR-код"""
     if OZON_SBP_QR_URL:
         msg = await message.answer(
             f"📱 <b>Оплата по QR-коду</b>\n\n"
@@ -238,16 +205,14 @@ async def cmd_qr(message: Message):
             f"🔗 <a href='{OZON_SBP_QR_URL}'>Ссылка на QR-код</a>",
             parse_mode="HTML"
         )
-        asyncio.create_task(delete_message_after_delay(msg))
+        asyncio.create_task(delete_message_after_delay(msg, 60))
     else:
         msg = await message.answer("❌ QR-код не настроен")
-        asyncio.create_task(delete_message_after_delay(msg))
+        asyncio.create_task(delete_message_after_delay(msg, 30))
 
 
-# ========== ОБРАБОТЧИКИ КНОПОК ==========
 @router.callback_query(lambda c: c.data and c.data.startswith("ozon_requisites_"))
 async def show_requisites(callback: CallbackQuery):
-    """Показать реквизиты для конкретного заказа"""
     order_id = callback.data.replace("ozon_requisites_", "")
     
     if order_id not in pending_payments:
@@ -260,13 +225,12 @@ async def show_requisites(callback: CallbackQuery):
         get_requisites_text(order_id, payment["amount"], payment["gift_name"]),
         parse_mode="HTML"
     )
-    asyncio.create_task(delete_message_after_delay(msg))
+    asyncio.create_task(delete_message_after_delay(msg, 120))
     await callback.answer()
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("ozon_confirm_"))
 async def payment_confirmed(callback: CallbackQuery):
-    """Пользователь подтвердил оплату"""
     order_id = callback.data.replace("ozon_confirm_", "")
     
     if order_id not in pending_payments:
@@ -279,7 +243,6 @@ async def payment_confirmed(callback: CallbackQuery):
     
     payment = pending_payments[order_id]
     
-    # Сохраняем транзакцию в базу
     await add_transaction(
         payment["user_id"],
         payment["username"],
@@ -289,13 +252,17 @@ async def payment_confirmed(callback: CallbackQuery):
         order_id
     )
     
-    # Удаляем основное сообщение с кнопками
+    # Обновляем топ героев
+    await update_top_hero(payment["user_id"], payment["username"], payment["amount"])
+    
+    # Проверяем вход в топ-3
+    await notify_top_entry(payment["user_id"], payment["username"], payment["amount"])
+    
     try:
         await callback.message.delete()
     except Exception:
         pass
     
-    # Отправляем новое сообщение
     confirm_msg = await callback.message.answer(
         f"✅ <b>Заявка на оплату принята!</b>\n\n"
         f"🎁 Подарок: {payment['gift_name']}\n"
@@ -306,10 +273,8 @@ async def payment_confirmed(callback: CallbackQuery):
         parse_mode="HTML"
     )
     
-    # Автоудаление через 60 секунд
     asyncio.create_task(delete_message_after_delay(confirm_msg, 60))
     
-    # Уведомляем администраторов
     from config import PROFIT_SPLIT
     
     amount = payment["amount"]
@@ -333,14 +298,13 @@ async def payment_confirmed(callback: CallbackQuery):
                 f"👤 Админ (28%): {int(admin_share)}₽\n"
                 f"🚀 Развитие (19%): {int(dev_share)}₽\n"
                 f"📋 Налог (6%): {int(tax_share)}₽\n\n"
-                f"✅ <code>/approve_{order_id}</code> — подтвердить и вручить подарок\n"
-                f"❌ <code>/decline_{order_id}</code> — отклонить",
+                f"✅ /approve_{order_id} — подтвердить и вручить подарок\n"
+                f"❌ /decline_{order_id} — отклонить",
                 parse_mode="HTML"
             )
         except Exception as e:
             logger.error(f"Ошибка уведомления админа: {e}")
     
-    # Удаляем заказ из ожидающих (после подтверждения)
     del pending_payments[order_id]
     
     await callback.answer(
@@ -351,14 +315,11 @@ async def payment_confirmed(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data == "ozon_cancel")
 async def payment_cancel(callback: CallbackQuery):
-    """Отмена платежа"""
-    # Удаляем сообщение с кнопками
     try:
         await callback.message.delete()
     except Exception:
         pass
     
-    # Отправляем сообщение об отмене и удаляем его через 10 секунд
     cancel_msg = await callback.message.answer(
         "❌ Платёж отменён.\n\n"
         "Выберите другой подарок в каталоге: /start",
@@ -368,22 +329,18 @@ async def payment_cancel(callback: CallbackQuery):
     await callback.answer()
 
 
-# ========== АДМИН-КОМАНДЫ ==========
 @router.message(Command("approve"))
 async def approve_payment(message: Message):
-    """/approve_ORDER_ID — подтвердить оплату и вручить подарок"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Только администраторы могут использовать эту команду.")
         return
     
-    # Парсим команду
     text = message.text
     if " " in text:
         order_id = text.split()[1]
     else:
         order_id = text.replace("/approve_", "")
     
-    # Проверяем, есть ли заказ в ожидающих (может быть уже удалён)
     if order_id not in pending_payments:
         await message.answer("❌ Заказ не найден или уже обработан")
         return
@@ -392,10 +349,8 @@ async def approve_payment(message: Message):
     user_id = payment["user_id"]
     gift_name = payment["gift_name"]
     
-    # Удаляем из ожидающих
     del pending_payments[order_id]
     
-    # Уведомляем пользователя о вручении подарка
     try:
         await bot.send_message(
             user_id,
@@ -415,7 +370,6 @@ async def approve_payment(message: Message):
 
 @router.message(Command("decline"))
 async def decline_payment(message: Message):
-    """/decline_ORDER_ID — отклонить оплату"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Только администраторы могут использовать эту команду.")
         return
@@ -452,10 +406,8 @@ async def decline_payment(message: Message):
     asyncio.create_task(delete_message_after_delay(admin_msg, 30))
 
 
-# ========== СТАТУС ПЛАТЕЖЕЙ ==========
 @router.message(Command("payments"))
 async def cmd_payments(message: Message):
-    """Команда /payments — показать статус платежей (админ)"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Только администраторы могут использовать эту команду.")
         return
