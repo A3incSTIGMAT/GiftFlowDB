@@ -1,12 +1,13 @@
 import logging
 from aiogram import Router, types
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import is_admin, is_super_admin, add_gallery_photo, get_gallery_photos, delete_gallery_photo, add_gift, get_all_gifts, update_gift
 from keyboards import get_admin_keyboard, get_main_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_back_to_admin_keyboard
-from config import SUPER_ADMIN_ID
+from config import SUPER_ADMIN_ID, CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -114,8 +115,6 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     post_text = data.get('post_text', '')
     post_photo = data.get('post_photo')
-    
-    from config import CHANNEL_ID
     
     try:
         if post_photo:
@@ -244,7 +243,7 @@ async def add_gallery_photo_prompt(callback: types.CallbackQuery, state: FSMCont
     )
     await callback.answer()
 
-@router.message(lambda message: message.photo, StateFilter="waiting_for_gallery_photo")
+@router.message(StateFilter("waiting_for_gallery_photo"), lambda message: message.photo)
 async def save_gallery_photo(message: types.Message, state: FSMContext):
     """Сохранение фото в галерею"""
     photo = message.photo[-1]
@@ -257,7 +256,7 @@ async def save_gallery_photo(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
 
-@router.message(lambda message: message.text == "/skip", StateFilter="waiting_for_gallery_description")
+@router.message(StateFilter("waiting_for_gallery_description"), lambda message: message.text == "/skip")
 async def skip_gallery_description(message: types.Message, state: FSMContext):
     """Пропуск описания"""
     data = await state.get_data()
@@ -381,7 +380,7 @@ async def get_gift_price(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Цена должна быть числом. Попробуйте еще раз:")
 
-@router.message(lambda message: message.text == "/skip", StateFilter(GiftStates.waiting_for_gift_description))
+@router.message(GiftStates.waiting_for_gift_description, lambda message: message.text == "/skip")
 async def skip_gift_description(message: types.Message, state: FSMContext):
     await state.update_data(gift_description="")
     await state.set_state(GiftStates.waiting_for_gift_icon)
@@ -408,7 +407,7 @@ async def get_gift_description(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
 
-@router.message(lambda message: message.text == "/skip", StateFilter(GiftStates.waiting_for_gift_icon))
+@router.message(GiftStates.waiting_for_gift_icon, lambda message: message.text == "/skip")
 async def skip_gift_icon(message: types.Message, state: FSMContext):
     await state.update_data(gift_icon="🎁")
     data = await state.get_data()
@@ -503,14 +502,3 @@ async def back_to_admin(callback: types.CallbackQuery):
         reply_markup=get_admin_keyboard()
     )
     await callback.answer()
-
-# ============ ОТМЕНА ============
-
-@router.message(lambda message: message.text == "/cancel")
-async def cancel_action(message: types.Message, state: FSMContext):
-    """Отмена текущего действия"""
-    await state.clear()
-    if await is_admin(message.from_user.id):
-        await message.answer("❌ Действие отменено.", reply_markup=get_admin_keyboard())
-    else:
-        await message.answer("❌ Действие отменено.", reply_markup=get_main_keyboard())
