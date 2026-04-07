@@ -1,5 +1,3 @@
-# handlers/ozon_payments.py - ПОЛНАЯ ВЕРСИЯ С ОТПРАВКОЙ ЧЕКА
-
 import logging
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
@@ -17,25 +15,17 @@ class PaymentStates(StatesGroup):
     waiting_for_screenshot = State()
 
 def get_sbp_payment_keyboard(gift_id, sbp_link):
-    """Клавиатура с кнопкой перехода к оплате"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="💳 Оплатить по ссылке", url=sbp_link),
-        ],
-        [
-            InlineKeyboardButton(text="📸 Отправить чек об оплате", callback_data=f"send_receipt_{gift_id}"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_gifts")
-        ]
+        [InlineKeyboardButton(text="💳 Оплатить по ссылке", url=sbp_link)],
+        [InlineKeyboardButton(text="📸 Отправить чек об оплате", callback_data=f"send_receipt_{gift_id}"),
+         InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_gifts")]
     ])
     return keyboard
 
 def get_card_payment_keyboard(gift_id):
-    """Клавиатура для оплаты картой"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📸 Отправить чек об оплате", callback_data=f"send_receipt_{gift_id}"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_gifts")
-        ]
+        [InlineKeyboardButton(text="📸 Отправить чек об оплате", callback_data=f"send_receipt_{gift_id}"),
+         InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_gifts")]
     ])
     return keyboard
 
@@ -110,7 +100,6 @@ async def send_receipt_prompt(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(PaymentStates.waiting_for_screenshot, lambda message: message.photo)
 async def receive_screenshot(message: types.Message, state: FSMContext):
-    """Получение скриншота чека"""
     data = await state.get_data()
     gift_id = data.get('gift_id')
     
@@ -165,21 +154,14 @@ async def receive_screenshot(message: types.Message, state: FSMContext):
 
 @router.message(PaymentStates.waiting_for_screenshot)
 async def invalid_screenshot(message: types.Message):
-    """Если прислали не фото"""
     await message.answer(
         "❌ Пожалуйста, отправьте <b>фото или скриншот</b> чека об оплате.\n\n"
         "Или отправьте /cancel для отмены.",
         parse_mode="HTML"
     )
 
-@router.message(lambda message: message.text == "/cancel")
-async def cancel_payment(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ Оплата отменена.", reply_markup=get_main_keyboard())
-
 @router.callback_query(lambda c: c.data == "back_to_gifts")
 async def back_to_gifts(callback: types.CallbackQuery, state: FSMContext):
-    """Возврат к списку подарков"""
     await state.clear()
     from handlers.gifts import show_gifts_list
     await show_gifts_list(callback.message, callback.from_user.id)
