@@ -1,5 +1,6 @@
 from aiogram import Router, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from keyboards import get_main_keyboard, get_admin_keyboard, get_cancel_keyboard
 from database import is_admin, is_super_admin
 
@@ -10,7 +11,6 @@ async def cmd_start(message: types.Message):
     """Обработчик команды /start"""
     user_id = message.from_user.id
     
-    # Проверяем, админ ли пользователь
     if await is_super_admin(user_id):
         keyboard = get_admin_keyboard()
         await message.answer(
@@ -79,7 +79,16 @@ async def cmd_channel_id(message: types.Message):
     else:
         await message.answer("❌ Команда только для администраторов.")
 
-# ========== ОБРАБОТЧИКИ КНОПОК ==========
+@router.message(Command("cancel"))
+async def cmd_cancel(message: types.Message, state: FSMContext):
+    """Отмена текущего действия"""
+    await state.clear()
+    user_id = message.from_user.id
+    
+    if await is_super_admin(user_id) or await is_admin(user_id):
+        await message.answer("❌ Действие отменено.", reply_markup=get_admin_keyboard())
+    else:
+        await message.answer("❌ Действие отменено.", reply_markup=get_main_keyboard())
 
 @router.message(lambda message: message.text == "Главное меню")
 async def back_to_main(message: types.Message):
@@ -122,14 +131,3 @@ async def admin_panel_button(message: types.Message):
             "Вернитесь в главное меню:",
             reply_markup=get_main_keyboard()
         )
-
-@router.message(lambda message: message.text == "Выйти из админки")
-async def exit_admin_panel(message: types.Message):
-    """Кнопка выхода из админки (если используешь)"""
-    keyboard = get_main_keyboard()
-    await message.answer(
-        "👋 <b>Выход из админ-панели</b>\n\n"
-        "Вы вернулись в главное меню:",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
