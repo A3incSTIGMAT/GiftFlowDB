@@ -19,6 +19,10 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# РЕГИСТРИРУЕМ ВСЕ РОУТЕРЫ
+for router in routers:
+    dp.include_router(router)
+
 # Передаём бота в модуль админки
 admin.set_bot(bot)
 
@@ -57,7 +61,7 @@ async def weekly_top_post():
                 post_text += f"{medal} {username} — {hero['total_amount']}₽\n"
             
             post_text += "\n💡 <i>Хочешь попасть в топ? Дари подарки через бота!</i>\n"
-            post_text += f"👉 @{admin.get_bot().username}"
+            post_text += f"👉 @{bot.username}"
             
             await bot.send_message(CHANNEL_ID, post_text, parse_mode="HTML")
             logger.info("✅ Пост топа опубликован")
