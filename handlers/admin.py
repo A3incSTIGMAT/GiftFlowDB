@@ -1,6 +1,5 @@
 import logging
 from aiogram import Router, types
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
@@ -9,8 +8,8 @@ from config import SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, ADMIN_IDS, CHANNEL_ID
 from database import (
     is_admin, is_super_admin, add_admin, remove_admin, get_all_admins,
     get_pending_transactions, update_transaction_status, get_all_transactions,
-    add_gift, get_all_gifts, update_gift, get_gallery_photos, add_gallery_photo,
-    delete_gallery_photo, get_stats, update_stats_cache, log_admin_action,
+    add_gift, get_gallery_photos, add_gallery_photo,
+    delete_gallery_photo, get_stats, log_admin_action,
     get_top_heroes, update_top_heroes
 )
 from keyboards import get_admin_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_main_keyboard
@@ -162,7 +161,7 @@ async def add_photo_command(message: types.Message):
     await message.answer("📸 Отправьте фото для добавления в галерею.\n\nДля отмены нажмите ❌ Отмена", reply_markup=get_cancel_keyboard())
 
 @router.message(lambda message: message.photo and message.text != "❌ Отмена")
-async def receive_photo_for_gallery(message: types.Message, state: FSMContext):
+async def receive_photo_for_gallery(message: types.Message):
     user_id = message.from_user.id
     if not await is_admin(user_id):
         await message.answer("❌ Нет доступа.")
@@ -264,7 +263,6 @@ async def receive_post_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo_file_id=photo_file_id)
     await state.set_state(CreatePostStates.preview)
     
-    # Показываем предпросмотр
     preview_text = f"📝 <b>Предпросмотр поста</b>\n\n{post_text}\n\n✅ <i>Всё верно?</i>"
     
     if photo_file_id:
@@ -292,7 +290,6 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
     post_text = data.get('post_text', '')
     photo_file_id = data.get('photo_file_id')
     
-    # Кнопки для поста
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     
     post_keyboard = InlineKeyboardMarkup(inline_keyboard=[
