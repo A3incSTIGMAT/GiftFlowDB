@@ -6,7 +6,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import BOT_TOKEN, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, CHANNEL_ID
 from database import init_db, update_stats_cache, get_top_heroes
 from handlers import routers
-from handlers import admin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,24 +13,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера с FSM storage
+# Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# РЕГИСТРИРУЕМ ВСЕ РОУТЕРЫ
+# Регистрируем все роутеры
 for router in routers:
     dp.include_router(router)
 
-# Передаём бота в модуль админки
-admin.set_bot(bot)
+# Убираем admin.set_bot(bot) - он не нужен!
 
 
 async def weekly_top_post():
     """Раз в неделю постим топ героев в канал"""
     while True:
         now = datetime.now()
-        # Следующее воскресенье 19:00
         days_until_sunday = (6 - now.weekday()) % 7
         if days_until_sunday == 0 and now.hour >= 19:
             days_until_sunday = 7
