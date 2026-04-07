@@ -1,9 +1,10 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import BOT_TOKEN, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
-from database import init_db, update_stats_cache
+from config import BOT_TOKEN, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, CHANNEL_ID
+from database import init_db, update_stats_cache, get_top_heroes
 from handlers import routers
 from handlers import admin
 
@@ -21,9 +22,48 @@ dp = Dispatcher(storage=storage)
 # Передаём бота в модуль админки
 admin.set_bot(bot)
 
-# Подключаем все роутеры
-for router in routers:
-    dp.include_router(router)
+
+async def weekly_top_post():
+    """Раз в неделю постим топ героев в канал"""
+    while True:
+        now = datetime.now()
+        # Следующее воскресенье 19:00
+        days_until_sunday = (6 - now.weekday()) % 7
+        if days_until_sunday == 0 and now.hour >= 19:
+            days_until_sunday = 7
+        next_sunday = now + timedelta(days=days_until_sunday)
+        next_sunday = next_sunday.replace(hour=19, minute=0, second=0, microsecond=0)
+        wait_seconds = (next_sunday - now).total_seconds()
+        
+        logger.info(f"⏰ Следующий пост топа через {wait_seconds / 3600:.1f} часов")
+        await asyncio.sleep(wait_seconds)
+        
+        try:
+            heroes = await get_top_heroes(limit=10)
+            
+            if not heroes:
+                logger.info("Нет героев для поста")
+                continue
+            
+            post_text = "🏆 <b>Топ героев канала за неделю</b>\n\n"
+            medals = ["🥇", "🥈", "🥉"]
+            
+            for i, hero in enumerate(heroes[:10]):
+                if i < 3:
+                    medal = medals[i]
+                else:
+                    medal = "🎖️"
+                username = hero.get('username') or f"user_{hero['user_id']}"
+                post_text += f"{medal} {username} — {hero['total_amount']}₽\n"
+            
+            post_text += "\n💡 <i>Хочешь попасть в топ? Дари подарки через бота!</i>\n"
+            post_text += f"👉 @{admin.get_bot().username}"
+            
+            await bot.send_message(CHANNEL_ID, post_text, parse_mode="HTML")
+            logger.info("✅ Пост топа опубликован")
+            
+        except Exception as e:
+            logger.error(f"Ошибка публикации топа: {e}")
 
 
 async def on_startup():
@@ -31,12 +71,9 @@ async def on_startup():
     logger.info("🔄 Инициализация базы данных...")
     await init_db()
     
-    # Проверка CHANNEL_ID
-    from config import CHANNEL_ID
     if CHANNEL_ID:
         logger.info(f"📢 Канал настроен: {CHANNEL_ID}")
         try:
-            # Проверяем права бота в канале
             member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=bot.id)
             if member.status in ("administrator", "creator"):
                 logger.info("✅ Бот имеет права администратора в канале")
@@ -47,8 +84,10 @@ async def on_startup():
     else:
         logger.warning("⚠️ CHANNEL_ID не настроен! Посты не будут публиковаться.")
     
-    # Обновление кэша статистики
     await update_stats_cache()
+    
+    # Запускаем фоновую задачу для топа
+    asyncio.create_task(weekly_top_post())
     
     logger.info("🚀 Бот запущен! Работаю 24/7!")
     logger.info(f"👑 Супер-админ: {SUPER_ADMIN_ID}")
