@@ -233,8 +233,22 @@ async def update_gift(gift_id: int, **kwargs):
 
 # ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ (ЗАКАЗОВ) ============
 
+async def add_transaction(user_id: int, gift_id: int, amount: int, payment_method: str = None) -> int:
+    """Добавить новую транзакцию (заказ)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Получаем название подарка
+        gift = await get_gift_by_id(gift_id)
+        gift_name = gift['name'] if gift else f"Подарок #{gift_id}"
+        
+        cursor = await db.execute("""
+            INSERT INTO transactions (user_id, gift_id, gift_name, amount, status, payment_method)
+            VALUES (?, ?, ?, ?, 'pending', ?)
+        """, (user_id, gift_id, gift_name, amount, payment_method))
+        await db.commit()
+        return cursor.lastrowid
+
 async def create_transaction(user_id: int, gift_id: int, amount: int, gift_name: str) -> int:
-    """Создать новую транзакцию"""
+    """Создать новую транзакцию (альтернативная функция)"""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
             INSERT INTO transactions (user_id, gift_id, gift_name, amount, status)
