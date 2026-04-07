@@ -1,121 +1,148 @@
-from aiogram.types import InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from config import TWITCH_URL, INSTAGRAM_URL
-from database import get_all_gifts
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
+# ========== REPLY КЛАВИАТУРЫ ==========
 
-async def get_main_menu_keyboard():
-    """Главное меню для обычных пользователей"""
-    builder = InlineKeyboardBuilder()
-    
-    builder.row(
-        InlineKeyboardButton(text="📺 Twitch", url=TWITCH_URL),
-        InlineKeyboardButton(text="📷 Instagram", url=INSTAGRAM_URL),
-        width=2
+def get_main_keyboard():
+    """Клавиатура главного меню для пользователей"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
+            [KeyboardButton(text="🎁 Каталог подарков")],
+            [KeyboardButton(text="🏆 Топ героев"), KeyboardButton(text="🎁 О конкурсе")],
+            [KeyboardButton(text="🆘 Помощь"), KeyboardButton(text="👑 Админ-панель")],
+            [KeyboardButton(text="Главное меню")]
+        ],
+        resize_keyboard=True
     )
-    
-    builder.row(
-        InlineKeyboardButton(text="🎁 Каталог подарков", callback_data="show_gifts"),
-        width=1
+    return keyboard
+
+def get_admin_keyboard():
+    """Клавиатура админ-панели"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📦 Управление заказами")],
+            [KeyboardButton(text="🖼️ Управление галереей")],
+            [KeyboardButton(text="✏️ Создать пост"), KeyboardButton(text="📊 Статистика")],
+            [KeyboardButton(text="🏆 Топ героев (админ)"), KeyboardButton(text="➕ Добавить подарок")],
+            [KeyboardButton(text="🎁 Главное меню")]
+        ],
+        resize_keyboard=True
     )
-    
-    builder.row(
-        InlineKeyboardButton(text="💬 Помощь", callback_data="contact_support"),
-        width=1
+    return keyboard
+
+def get_cancel_keyboard():
+    """Клавиатура для отмены действия"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="❌ Отмена")]
+        ],
+        resize_keyboard=True
     )
-    
-    return builder.as_markup()
+    return keyboard
 
 
-async def get_gifts_keyboard():
-    """Клавиатура со списком подарков (с иконками)"""
-    gifts = await get_all_gifts()
-    builder = InlineKeyboardBuilder()
-    
+# ========== INLINE КЛАВИАТУРЫ ==========
+
+def get_gifts_keyboard(gifts):
+    """Клавиатура каталога подарков"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     for gift in gifts:
-        icon = gift.get('icon', '🎁')
-        builder.button(
-            text=f"{icon} {gift['name']} | {gift['price']}₽",
-            callback_data=f"gift_{gift['id']}"
-        )
-    
-    builder.row(
-        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main"),
-        width=1
-    )
-    
-    builder.adjust(1)
-    return builder.as_markup()
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"{gift['icon']} {gift['name']} — {gift['price']}₽",
+                callback_data=f"gift_{gift['id']}"
+            )
+        ])
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")
+    ])
+    return keyboard
 
+def get_payment_keyboard(gift_id, gift_name, gift_price):
+    """Клавиатура оплаты для подарка"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💳 Оплатить картой", callback_data=f"pay_card_{gift_id}"),
+            InlineKeyboardButton(text="📱 СБП/QR-код", callback_data=f"pay_sbp_{gift_id}")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts")
+        ]
+    ])
+    return keyboard
 
-async def get_gift_detail_keyboard(gift_id: int):
-    """Клавиатура для конкретного подарка"""
-    builder = InlineKeyboardBuilder()
-    
-    builder.row(
-        InlineKeyboardButton(text="💳 Оплатить", callback_data=f"pay_{gift_id}"),
-        width=1
-    )
-    
-    builder.row(
-        InlineKeyboardButton(text="⬅️ К списку", callback_data="show_gifts"),
-        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main"),
-        width=2
-    )
-    
-    return builder.as_markup()
+def get_payment_details_keyboard(gift_id):
+    """Клавиатура с реквизитами для оплаты"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Я оплатил(а)", callback_data=f"confirm_payment_{gift_id}"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_gifts")
+        ]
+    ])
+    return keyboard
 
+def get_admin_orders_keyboard(orders):
+    """Клавиатура для управления заказами (админка)"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    for order in orders[:10]:  # Показываем последние 10 заказов
+        status_emoji = "✅" if order['status'] == 'paid' else "⏳"
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"{status_emoji} Заказ #{order['id']} — {order['gift_name']} — {order['amount']}₽",
+                callback_data=f"order_{order['id']}"
+            )
+        ])
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_orders")
+    ])
+    return keyboard
 
-async def get_back_keyboard():
-    """Клавиатура для возврата"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ Назад", callback_data="show_gifts")
-    builder.button(text="🏠 Главное меню", callback_data="back_to_main")
-    builder.adjust(1)
-    return builder.as_markup()
+def get_order_actions_keyboard(order_id):
+    """Клавиатура действий с заказом"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"approve_{order_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{order_id}")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад к заказам", callback_data="back_to_orders")
+        ]
+    ])
+    return keyboard
 
+def get_gallery_keyboard(images):
+    """Клавиатура галереи (админка)"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    for img in images[:10]:
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"🖼️ {img['description'][:20]}",
+                callback_data=f"gallery_{img['id']}"
+            )
+        ])
+    keyboard.inline_keyboard.extend([
+        [InlineKeyboardButton(text="➕ Добавить фото", callback_data="add_gallery_photo")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
+    ])
+    return keyboard
 
-async def get_admin_keyboard(user_id: int):
-    """Админ-панель (для всех админов)"""
-    from config import SUPER_ADMIN_ID
-    
-    builder = InlineKeyboardBuilder()
-    
-    # Кнопки для всех админов
-    builder.row(
-        InlineKeyboardButton(text="📦 Заказы", callback_data="admin_orders"),
-        InlineKeyboardButton(text="📸 Галерея", callback_data="admin_gallery"),
-        width=2
-    )
-    
-    builder.row(
-        InlineKeyboardButton(text="📢 Создать пост", callback_data="admin_create_post"),
-        width=1
-    )
-    
-    # Статистика только для супер-админа
-    if user_id == SUPER_ADMIN_ID:
-        builder.row(
-            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
-            width=1
-        )
-    
-    builder.row(
-        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main"),
-        width=1
-    )
-    
-    return builder.as_markup()
+def get_confirm_post_keyboard():
+    """Клавиатура подтверждения публикации поста"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Опубликовать", callback_data="confirm_post"),
+            InlineKeyboardButton(text="✏️ Редактировать текст", callback_data="edit_post_text"),
+            InlineKeyboardButton(text="🖼️ Изменить фото", callback_data="edit_post_photo")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_post")
+        ]
+    ])
+    return keyboard
 
-
-async def get_super_admin_choice_keyboard():
-    """Клавиатура выбора режима для супер-админа"""
-    builder = InlineKeyboardBuilder()
-    
-    builder.row(
-        InlineKeyboardButton(text="👤 Режим пользователя", callback_data="mode_user"),
-        InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="mode_admin"),
-        width=2
-    )
-    
-    return builder.as_markup()
+def get_back_to_admin_keyboard():
+    """Кнопка возврата в админку"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад в админ-панель", callback_data="back_to_admin")]
+    ])
+    return keyboard
