@@ -79,27 +79,29 @@ async def cmd_channel_id(message: types.Message):
     else:
         await message.answer("❌ Команда только для администраторов.")
 
+# ========== ОБРАБОТЧИКИ КНОПОК ==========
+
 @router.message(lambda message: message.text == "Главное меню")
 async def back_to_main(message: types.Message):
-    """Возврат в главное меню"""
-    user_id = message.from_user.id
-    
-    if await is_super_admin(user_id) or await is_admin(user_id):
-        keyboard = get_admin_keyboard()
-        await message.answer(
-            "🛠️ <b>Админ-панель</b>\n\n"
-            "Выберите действие:",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-    else:
-        keyboard = get_main_keyboard()
-        await message.answer(
-            "🎁 <b>Главное меню</b>\n\n"
-            "Выберите действие:",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+    """Возврат в главное меню (для обычных пользователей)"""
+    keyboard = get_main_keyboard()
+    await message.answer(
+        "🎁 <b>Главное меню</b>\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+@router.message(lambda message: message.text == "🎁 Главное меню")
+async def back_from_admin_to_user(message: types.Message):
+    """Возврат из админ-панели в пользовательское меню"""
+    keyboard = get_main_keyboard()
+    await message.answer(
+        "🎁 <b>Возврат в главное меню</b>\n\n"
+        "Вы переключились в режим пользователя:",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
 
 @router.message(lambda message: message.text == "👑 Админ-панель")
 async def admin_panel_button(message: types.Message):
@@ -120,3 +122,14 @@ async def admin_panel_button(message: types.Message):
             "Вернитесь в главное меню:",
             reply_markup=get_main_keyboard()
         )
+
+@router.message(lambda message: message.text == "Выйти из админки")
+async def exit_admin_panel(message: types.Message):
+    """Кнопка выхода из админки (если используешь)"""
+    keyboard = get_main_keyboard()
+    await message.answer(
+        "👋 <b>Выход из админ-панели</b>\n\n"
+        "Вы вернулись в главное меню:",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
