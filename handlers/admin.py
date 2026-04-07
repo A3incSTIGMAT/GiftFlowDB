@@ -1,665 +1,560 @@
 import logging
-import asyncio
-from datetime import datetime
-from typing import Optional
-from aiogram import Router, types, F, Bot
+from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
-from aiogram.exceptions import TelegramBadRequest
-from config import (
-    ADMIN_IDS, 
-    SUPER_ADMIN_ID, 
-    SUPPORT_ADMIN_ID, 
-    TWITCH_URL, 
-    INSTAGRAM_URL, 
-    CHANNEL_ID, 
-    BOT_TOKEN
-)
+from datetime import datetime
+
+from config import SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, ADMIN_IDS, CHANNEL_ID
 from database import (
-    get_all_transactions, 
-    get_stats, 
-    add_gift, 
-    add_gallery_photo, 
-    get_gallery_photos,
-    log_admin_action,
-    update_stats_cache
+    is_admin, is_super_admin, add_admin, remove_admin, get_all_admins,
+    get_pending_transactions, update_transaction_status, get_all_transactions,
+    add_gift, get_all_gifts, update_gift, get_gallery_photos, add_gallery_photo,
+    delete_gallery_photo, get_stats, update_stats_cache, log_admin_action,
+    get_top_heroes, update_top_heroes
 )
-from keyboards import get_admin_keyboard
+from keyboards import get_admin_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_main_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Глобальный бот
-_bot: Bot = None
+# ============ FSM СОСТОЯНИЯ ============
 
+class CreatePostStates(StatesGroup):
+    waiting_for_text = State()
+    waiting_for_photo = State()
+    preview = State()
 
-def set_bot(bot: Bot):
-    """Установка экземпляра бота"""
-    global _bot
-    _bot = bot
+class AddGiftStates(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_price = State()
+    waiting_for_description = State()
+    waiting_for_icon = State()
 
+# ============ ГЛАВНАЯ АДМИН-ПАНЕЛЬ ============
 
-def get_bot() -> Bot:
-    """Получение экземпляра бота"""
-    if _bot is None:
-        raise RuntimeError("Bot not initialized. Call set_bot() first.")
-    return _bot
-
-
-# ========== КОНСТАНТЫ ==========
-MAX_PREVIEW_LENGTH = 1000
-
-
-# ========== FSM СОСТОЯНИЯ ==========
-class AdminStates(StatesGroup):
-    """Состояния админ-панели"""
-    adding_gift = State()
-    creating_post_text = State()
-    creating_post_photo = State()
-    creating_post_preview = State()
-    editing_post_text = State()
-    editing_post_photo = State()
-
-
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-async def delete_message_safe(message: types.Message, delay: int = 3):
-    """Безопасное удаление сообщения с задержкой"""
-    await asyncio.sleep(delay)
-    try:
-        await message.delete()
-    except TelegramBadRequest as e:
-        if "message can't be deleted" not in str(e).lower():
-            logger.error(f"Ошибка удаления сообщения: {e}")
-    except Exception as e:
-        logger.error(f"Неожиданная ошибка удаления: {e}")
-
-
-async def send_temp_message(message: types.Message, text: str, delay: int = 5, **kwargs):
-    """Отправка временного сообщения с автоудалением"""
-    try:
-        msg = await message.answer(text, **kwargs)
-        asyncio.create_task(delete_message_safe(msg, delay))
-        return msg
-    except Exception as e:
-        logger.error(f"Ошибка отправки временного сообщения: {e}")
-        return None
-
-
-def validate_channel_id(channel_id: str) -> bool:
-    """Валидация ID канала"""
-    if not channel_id:
-        return False
-    channel_id = str(channel_id).strip()
-    return channel_id.startswith('-100') or channel_id.startswith('-')
-
-
-async def check_bot_channel_permissions(channel_id: str) -> bool:
-    """Проверка прав бота в канале"""
-    try:
-        bot = get_bot()
-        member = await bot.get_chat_member(chat_id=channel_id, user_id=bot.id)
-        return member.status in ("administrator", "creator")
-    except Exception as e:
-        logger.error(f"Ошибка проверки прав в канале: {e}")
-        return False
-
-
-# ========== ОБРАБОТЧИКИ КОМАНД ==========
-@router.message(Command("cancel"))
-async def cancel_action(message: types.Message, state: FSMContext):
-    """Универсальная отмена действия"""
-    await state.clear()
-    await log_admin_action(message.from_user.id, "cancel", "Отмена действия через /cancel")
-    cancel_msg = await message.answer("❌ Действие отменено")
-    asyncio.create_task(delete_message_safe(cancel_msg, 3))
-    asyncio.create_task(delete_message_safe(message, 3))
-    logger.info(f"Админ {message.from_user.id} отменил действие")
-
-
-@router.message(Command("admin"))
-async def cmd_admin(message: types.Message, state: FSMContext):
-    """Открытие админ-панели"""
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Доступ запрещён")
+@router.message(lambda message: message.text == "👑 Админ-панель")
+async def admin_panel(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ У вас нет доступа к админ-панели.", reply_markup=get_main_keyboard())
         return
     
-    await state.clear()
-    await log_admin_action(message.from_user.id, "open_admin", "Открытие админ-панели")
+    keyboard = get_admin_keyboard()
+    await message.answer(
+        "🛠️ <b>Админ-панель</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+# ============ УПРАВЛЕНИЕ ЗАКАЗАМИ ============
+
+@router.message(lambda message: message.text == "📦 Управление заказами")
+async def manage_orders(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
+        return
     
-    try:
-        await message.answer(
-            "⚙️ <b>Админ-панель</b>\n\nВыбери действие:",
-            parse_mode="HTML",
-            reply_markup=await get_admin_keyboard(message.from_user.id)
+    transactions = await get_pending_transactions(limit=20)
+    
+    if not transactions:
+        await message.answer("📦 <b>Нет ожидающих заказов</b>\n\nВсе заказы обработаны.", parse_mode="HTML")
+        return
+    
+    text = "📦 <b>Ожидают подтверждения:</b>\n\n"
+    for t in transactions[:10]:
+        text += (
+            f"┌ <b>Заказ #{t['id']}</b>\n"
+            f"├ 🎁 {t['gift_name']}\n"
+            f"├ 💰 {t['amount']}₽\n"
+            f"├ 👤 @{t.get('username') or t['user_id']}\n"
+            f"├ 💳 {t.get('payment_method', 'не указан')}\n"
+            f"├ 🕐 {t['created_at'][:16]}\n"
+            f"└ ✅ <code>/approve {t['id']}</code>\n\n"
         )
-        logger.info(f"Админ {message.from_user.id} открыл админ-панель")
-    except Exception as e:
-        logger.error(f"Ошибка открытия админ-панели: {e}")
-        await send_temp_message(message, "❌ Ошибка загрузки админ-панели")
+    
+    text += "\n💡 <i>Используй команду /approve [номер_заказа] для подтверждения</i>"
+    await message.answer(text, parse_mode="HTML")
 
-
-@router.message(Command("stats"))
-async def stats_command(message: types.Message):
-    """Показ статистики"""
-    if message.from_user.id != SUPER_ADMIN_ID:
-        await message.answer("❌ Только супер-админ")
-        return
-    
-    await log_admin_action(message.from_user.id, "view_stats", "Просмотр статистики")
-    
-    stats = await get_stats()
-    if not stats:
-        await send_temp_message(message, "❌ Ошибка получения статистики")
-        return
-    
-    await message.answer(
-        f"📊 <b>Статистика</b>\n\n"
-        f"📦 Заказов: {stats.get('total_orders', 0)}\n"
-        f"💰 Оборот: {stats.get('total_amount', 0)}₽\n"
-        f"👥 Пользователей: {stats.get('total_users', 0)}\n"
-        f"🕐 {datetime.now().strftime('%H:%M:%S')}",
-        parse_mode="HTML"
-    )
-    logger.info(f"Админ {message.from_user.id} просмотрел статистику")
-
-
-@router.message(Command("gallery"))
-async def show_gallery(message: types.Message):
-    """Показ галереи"""
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Доступ запрещён")
-        return
-    
-    try:
-        photos = await get_gallery_photos(limit=10)
-        if not photos:
-            await send_temp_message(message, "📸 Галерея пуста")
-            return
-        
-        await log_admin_action(message.from_user.id, "view_gallery", "Просмотр галереи")
-        
-        media_group = []
-        for pid, caption, date in photos[:10]:
-            media_group.append(
-                InputMediaPhoto(
-                    media=pid,
-                    caption=f"📅 {date}\n{caption or 'без подписи'}",
-                    parse_mode="HTML"
-                )
-            )
-        
-        if media_group:
-            await message.answer_media_group(media_group)
-            logger.info(f"Админ {message.from_user.id} просмотрел галерею ({len(photos)} фото)")
-    except Exception as e:
-        logger.error(f"Ошибка показа галереи: {e}")
-        await send_temp_message(message, "❌ Ошибка загрузки галереи")
-
-
-# ========== ОБРАБОТКА КНОПОК АДМИНКИ ==========
-@router.callback_query(F.data.startswith("admin_"))
-async def admin_callback(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка кнопок админ-панели"""
-    user_id = callback.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await callback.answer("❌ Доступ запрещён")
-        return
-    
-    parts = callback.data.split("_", 1)
-    if len(parts) < 2:
-        await callback.answer("❌ Неверный формат")
-        return
-    
-    action = parts[1]
-    
-    # Проверка активного состояния
-    current_state = await state.get_state()
-    if current_state and action not in ("cancel", "post_cancel"):
-        await callback.answer("❌ Завершите текущее действие (/cancel)", show_alert=True)
-        return
-    
-    await callback.answer()
-    
-    try:
-        if action == "orders":
-            txns = await get_all_transactions(limit=20)
-            if not txns:
-                await callback.message.answer("📦 Заказов пока нет")
-                return
-            
-            text = "📦 <b>Последние заказы:</b>\n\n"
-            for t in txns[:10]:
-                text += f"💰 {t.get('amount', 0)}₽ | {t.get('gift_name', 'N/A')} | @{t.get('username', 'нет')}\n"
-            await callback.message.answer(text, parse_mode="HTML")
-            await log_admin_action(user_id, "view_orders", "Просмотр заказов")
-            logger.info(f"Админ {user_id} просмотрел заказы")
-        
-        elif action == "stats":
-            if user_id != SUPER_ADMIN_ID:
-                await callback.answer("❌ Только супер-админ", show_alert=True)
-                return
-            
-            stats = await get_stats()
-            if not stats:
-                await callback.message.answer("❌ Ошибка получения статистики")
-                return
-            
-            await callback.message.answer(
-                f"📊 <b>Статистика</b>\n\n"
-                f"📦 Заказов: {stats.get('total_orders', 0)}\n"
-                f"💰 Оборот: {stats.get('total_amount', 0)}₽\n"
-                f"👥 Пользователей: {stats.get('total_users', 0)}",
-                parse_mode="HTML"
-            )
-            await log_admin_action(user_id, "view_stats", "Просмотр статистики из меню")
-        
-        elif action == "gallery":
-            await callback.message.answer(
-                "📸 <b>Галерея</b>\n\n"
-                "Отправь фото с подписью — добавлю в галерею.\n"
-                "Пример: фото + подпись 'Красивое фото со стрима'\n\n"
-                "❌ Отмена: /cancel",
-                parse_mode="HTML"
-            )
-            logger.info(f"Админ {user_id} начал добавление в галерею")
-        
-        elif action == "add_gift":
-            if user_id not in (SUPER_ADMIN_ID, SUPPORT_ADMIN_ID):
-                await callback.answer("❌ Только админы с правами на подарки", show_alert=True)
-                return
-            
-            await state.clear()
-            await state.set_state(AdminStates.adding_gift)
-            
-            await callback.message.answer(
-                "🎁 <b>Добавление подарка</b>\n\n"
-                "Формат: <code>Название | Цена | Описание | Иконка</code>\n"
-                "Пример: <code>🍕 Пицца | 500 | Вкусная пицца | 🍕</code>\n\n"
-                "⏰ Время: 30 минут\n"
-                "❌ Отмена: /cancel",
-                parse_mode="HTML"
-            )
-            await log_admin_action(user_id, "start_add_gift", "Начало добавления подарка")
-            logger.info(f"Админ {user_id} начал добавление подарка")
-        
-        elif action == "create_post":
-            await state.clear()
-            await state.set_state(AdminStates.creating_post_text)
-            
-            await callback.message.answer(
-                "📢 <b>Создание поста — Шаг 1/4</b>\n\n"
-                "✏️ Напиши текст поста\n\n"
-                "⏰ Время: 30 минут\n"
-                "❌ Отмена: /cancel",
-                parse_mode="HTML"
-            )
-            await log_admin_action(user_id, "start_create_post", "Начало создания поста")
-            logger.info(f"Админ {user_id} начал создание поста")
-    
-    except Exception as e:
-        logger.error(f"Ошибка обработки кнопки: {e}")
-        await send_temp_message(callback.message, f"❌ Ошибка: {e}")
-
-
-# ========== ДОБАВЛЕНИЕ ПОДАРКА ==========
-@router.message(AdminStates.adding_gift)
-async def handle_add_gift(message: types.Message, state: FSMContext):
-    """Обработка добавления подарка"""
+@router.message(lambda message: message.text and message.text.startswith("/approve"))
+async def approve_order(message: types.Message):
     user_id = message.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await state.clear()
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
         return
     
-    if not message.text:
-        await send_temp_message(message, "❌ Ожидаю текст в формате: Название | Цена | Описание | Иконка")
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("❌ Используй: <code>/approve 123</code>", parse_mode="HTML")
         return
     
     try:
-        parts = message.text.split("|")
-        if len(parts) < 3:
-            await send_temp_message(
-                message,
-                "❌ Ошибка. Нужно: <code>Название | Цена | Описание | Иконка</code>",
-                parse_mode="HTML"
-            )
-            return
-        
-        name = parts[0].strip()
-        
+        transaction_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID заказа должен быть числом.")
+        return
+    
+    transactions = await get_all_transactions(limit=100)
+    transaction = next((t for t in transactions if t['id'] == transaction_id), None)
+    
+    if not transaction:
+        await message.answer(f"❌ Заказ #{transaction_id} не найден.")
+        return
+    
+    if transaction['status'] == 'paid':
+        await message.answer(f"✅ Заказ #{transaction_id} уже подтверждён.")
+        return
+    
+    await update_transaction_status(transaction_id, 'paid', confirmed_by=user_id)
+    await log_admin_action(user_id, "approve_order", f"Заказ #{transaction_id}")
+    
+    position = await update_top_heroes(transaction['user_id'], transaction['amount'], transaction.get('username'))
+    
+    try:
+        user_text = f"✅ <b>Ваш заказ #{transaction_id} подтверждён!</b>\n\n🎁 {transaction['gift_name']}\n💰 Сумма: {transaction['amount']}₽\n\n"
+        if position:
+            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+            user_text += f"{medals.get(position, '🎖️')} <b>Вы в топ-{position} героев!</b>\n\n"
+        user_text += "❤️ Спасибо за поддержку Ланы!"
+        await message.bot.send_message(transaction['user_id'], user_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка уведомления пользователя: {e}")
+    
+    if transaction['amount'] >= 5000:
         try:
-            price = int(parts[1].strip())
-            if price <= 0:
-                raise ValueError("Цена должна быть положительной")
-        except ValueError as e:
-            await send_temp_message(message, f"❌ Неверная цена: {e}")
-            return
-        
-        desc = parts[2].strip()
-        icon = parts[3].strip() if len(parts) > 3 else "🎁"
-        
-        success = await add_gift(name, price, desc, icon)
-        
-        if success:
-            await message.answer(f"✅ Подарок <b>{name}</b> добавлен!", parse_mode="HTML")
-            await log_admin_action(user_id, "add_gift", f"Добавлен подарок: {name} ({price}₽)")
-            logger.info(f"Админ {user_id} добавил подарок: {name}")
-        else:
-            await send_temp_message(message, "❌ Ошибка при добавлении подарка в БД")
-            
-    except Exception as e:
-        logger.error(f"Ошибка добавления подарка: {e}")
-        await send_temp_message(message, f"❌ Ошибка: {type(e).__name__}")
-    finally:
-        await state.clear()
-
-
-# ========== СОЗДАНИЕ ПОСТА ==========
-@router.message(AdminStates.creating_post_text)
-async def handle_post_text(message: types.Message, state: FSMContext):
-    """Обработка текста поста"""
-    user_id = message.from_user.id
+            channel_text = f"🎉 <b>Новый донат!</b>\n\n@{transaction.get('username') or 'Аноним'} подарил(а) {transaction['gift_name']} на {transaction['amount']}₽\n❤️ Спасибо за поддержку!"
+            await message.bot.send_message(CHANNEL_ID, channel_text, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Ошибка отправки в канал: {e}")
     
-    if not message.text or len(message.text) < 10:
-        await send_temp_message(message, "❌ Текст слишком короткий (минимум 10 символов)")
+    await message.answer(f"✅ Заказ #{transaction_id} подтверждён!\nПользователь уведомлён.\nТоп героев обновлён.", parse_mode="HTML")
+
+# ============ УПРАВЛЕНИЕ ГАЛЕРЕЕЙ ============
+
+@router.message(lambda message: message.text == "🖼️ Управление галереей")
+async def manage_gallery(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
         return
     
-    if len(message.text) > 4000:
-        await send_temp_message(message, "❌ Текст слишком длинный (максимум 4000 символов)")
+    photos = await get_gallery_photos(limit=10)
+    
+    if not photos:
+        await message.answer("🖼️ <b>Галерея пуста</b>\n\nДобавьте фото командой /add_photo", parse_mode="HTML")
         return
     
-    await state.update_data(post_text=message.text)
-    await state.set_state(AdminStates.creating_post_photo)
+    text = "🖼️ <b>Галерея</b>\n\n"
+    for p in photos[:10]:
+        text += f"┌ <b>ID:</b> {p['id']}\n├ 📝 {p['description'][:30] if p['description'] else 'без описания'}\n└ 🗑️ <code>/del_photo {p['id']}</code>\n\n"
     
-    await message.answer(
-        "📢 <b>Создание поста — Шаг 2/4</b>\n\n"
-        "📸 Отправь фото или /skip для пропуска\n\n"
-        "❌ Отмена: /cancel",
-        parse_mode="HTML"
-    )
-    logger.info(f"Админ {user_id} ввёл текст поста")
+    text += "\n💡 <i>Добавить фото: /add_photo [описание]\nУдалить фото: /del_photo [ID]</i>"
+    await message.answer(text, parse_mode="HTML")
 
-
-@router.message(Command("skip"), AdminStates.creating_post_photo)
-async def skip_photo(message: types.Message, state: FSMContext):
-    """Пропуск фото"""
+@router.message(lambda message: message.text and message.text.startswith("/add_photo"))
+async def add_photo_command(message: types.Message):
     user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
+        return
     
-    await state.update_data(post_photo_id=None)
-    await state.set_state(AdminStates.creating_post_preview)
-    
-    data = await state.get_data()
-    await show_preview(message, data.get("post_text", ""), None, state)
-    logger.info(f"Админ {user_id} пропустил фото для поста")
+    await message.answer("📸 Отправьте фото для добавления в галерею.\n\nДля отмены нажмите ❌ Отмена", reply_markup=get_cancel_keyboard())
 
-
-@router.message(F.photo, AdminStates.creating_post_photo)
-async def handle_post_photo(message: types.Message, state: FSMContext):
-    """Обработка фото для поста"""
+@router.message(lambda message: message.photo and message.text != "❌ Отмена")
+async def receive_photo_for_gallery(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
+        return
     
     photo = message.photo[-1]
-    await state.update_data(post_photo_id=photo.file_id)
-    await state.set_state(AdminStates.creating_post_preview)
+    file_id = photo.file_id
+    caption = message.caption or ""
     
-    data = await state.get_data()
-    await show_preview(message, data.get("post_text", ""), photo.file_id, state)
-    logger.info(f"Админ {user_id} добавил фото к посту")
-
-
-async def show_preview(message: types.Message, text: str, photo_id: Optional[str], state: FSMContext):
-    """Показ предпросмотра поста с информацией о кнопках"""
-    preview_text = text[:MAX_PREVIEW_LENGTH]
-    if len(text) > MAX_PREVIEW_LENGTH:
-        preview_text += f"\n\n... (ещё {len(text) - MAX_PREVIEW_LENGTH} символов)"
+    await add_gallery_photo(file_id, caption, user_id)
+    await log_admin_action(user_id, "add_photo", f"Добавлено фото: {caption[:50]}")
     
-    preview_msg = f"📢 <b>Предпросмотр поста:</b>\n\n{preview_text}\n\n━━━━━━━━━━━━━━━━━━━━\n\n<i>Кнопки будут добавлены автоматически:</i>\n📺 Twitch | 📷 Instagram | 🎁 Подарки"
-    
-    if photo_id:
-        await message.answer_photo(photo_id, caption=preview_msg, parse_mode="HTML")
-    else:
-        await message.answer(preview_msg, parse_mode="HTML")
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Опубликовать", callback_data="post_publish")],
-        [InlineKeyboardButton(text="✏️ Редактировать текст", callback_data="post_edit_text")],
-        [InlineKeyboardButton(text="📸 Изменить фото", callback_data="post_edit_photo")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="post_cancel")]
-    ])
-    await message.answer("Что делаем дальше?", reply_markup=kb)
+    await message.answer(f"✅ Фото добавлено в галерею!\n📝 Описание: {caption if caption else 'нет'}", reply_markup=get_admin_keyboard())
 
-
-# ========== ПУБЛИКАЦИЯ ПОСТА ==========
-@router.callback_query(F.data == "post_publish", AdminStates.creating_post_preview)
-async def publish_post(callback: types.CallbackQuery, state: FSMContext):
-    """Подтверждение публикации поста"""
-    if not validate_channel_id(CHANNEL_ID):
-        await callback.answer("❌ Канал не настроен", show_alert=True)
-        await callback.message.answer(
-            "❌ CHANNEL_ID не настроен корректно. Должен начинаться с -100",
-            parse_mode="HTML"
-        )
+@router.message(lambda message: message.text and message.text.startswith("/del_photo"))
+async def delete_photo_command(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
         return
     
-    has_perms = await check_bot_channel_permissions(CHANNEL_ID)
-    if not has_perms:
-        await callback.answer("❌ Нет прав в канале", show_alert=True)
-        await callback.message.answer(
-            "❌ У бота нет прав администратора в канале\n"
-            f"Канал: <code>{CHANNEL_ID}</code>",
-            parse_mode="HTML"
-        )
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("❌ Используй: <code>/del_photo 123</code>", parse_mode="HTML")
         return
-    
-    await callback.message.answer(
-        "⚠️ <b>Подтверждение публикации</b>\n\n"
-        "Пост будет опубликован в канале с кнопками:\n"
-        "📺 Twitch | 📷 Instagram | 🎁 Подарки\n\n"
-        "Нажмите ещё раз для подтверждения.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, опубликовать", callback_data="post_publish_confirm")],
-            [InlineKeyboardButton(text="✏️ Редактировать", callback_data="post_edit_text")]
-        ])
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "post_publish_confirm", AdminStates.creating_post_preview)
-async def publish_post_confirm(callback: types.CallbackQuery, state: FSMContext):
-    """Финальная публикация поста с кнопками"""
-    user_id = callback.from_user.id
-    
-    data = await state.get_data()
-    text = data.get("post_text", "")
-    photo_id = data.get("post_photo_id")
-    
-    if not text:
-        await callback.answer("❌ Нет текста", show_alert=True)
-        await state.clear()
-        return
-    
-    bot = get_bot()
-    bot_username = (await bot.get_me()).username or "GiftFlowDB_bot"
-    
-    # Текст поста (без ссылок в тексте)
-    post_text = f"{text}\n\n━━━━━━━━━━━━━━━━━━━━"
-    
-    # Кнопки
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📺 Twitch", url=TWITCH_URL),
-            InlineKeyboardButton(text="📷 Instagram", url=INSTAGRAM_URL),
-        ],
-        [
-            InlineKeyboardButton(text="🎁 Подарки", url=f"https://t.me/{bot_username}?start"),
-            InlineKeyboardButton(text="💬 Помощь", url=f"https://t.me/{bot_username}"),
-        ]
-    ])
     
     try:
-        if photo_id:
-            await bot.send_photo(
-                chat_id=CHANNEL_ID,
-                photo=photo_id,
-                caption=post_text,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-        else:
-            await bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=post_text,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-        
-        await callback.message.answer("✅ Пост опубликован в канале с кнопками!")
-        await log_admin_action(user_id, "publish_post", f"Опубликован пост ({len(text)} символов)")
-        logger.info(f"Админ {user_id} опубликовал пост с кнопками")
-        await state.clear()
-        
-    except TelegramBadRequest as e:
-        logger.error(f"Ошибка публикации: {e}")
-        await callback.message.answer(f"❌ Ошибка: {str(e)[:200]}")
-    except Exception as e:
-        logger.error(f"Неожиданная ошибка: {e}")
-        await callback.message.answer("❌ Непредвиденная ошибка")
-        await state.clear()
+        photo_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID фото должен быть числом.")
+        return
     
-    await callback.answer()
+    success = await delete_gallery_photo(photo_id)
+    
+    if success:
+        await log_admin_action(user_id, "delete_photo", f"Удалено фото #{photo_id}")
+        await message.answer(f"✅ Фото #{photo_id} удалено из галереи.")
+    else:
+        await message.answer(f"❌ Фото #{photo_id} не найдено.")
 
+# ============ СОЗДАНИЕ ПОСТОВ ============
 
-# ========== РЕДАКТИРОВАНИЕ ПОСТА ==========
-@router.callback_query(F.data == "post_edit_text", AdminStates.creating_post_preview)
-async def edit_post_text(callback: types.CallbackQuery, state: FSMContext):
-    """Редактирование текста поста"""
-    await state.set_state(AdminStates.editing_post_text)
-    await callback.message.answer(
-        "✏️ <b>Редактирование текста</b>\n\n"
-        "Отправь новый текст поста\n\n"
-        "❌ Отмена: /cancel",
-        parse_mode="HTML"
+@router.message(lambda message: message.text == "✏️ Создать пост")
+async def create_post_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    await state.set_state(CreatePostStates.waiting_for_text)
+    await message.answer(
+        "✏️ <b>Создание поста</b>\n\n"
+        "Отправьте <b>текст</b> поста.\n"
+        "Поддерживается HTML разметка.\n\n"
+        "Для отмены нажмите ❌ Отмена",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
     )
-    await callback.answer()
-    logger.info(f"Админ {callback.from_user.id} редактирует текст")
 
-
-@router.message(AdminStates.editing_post_text)
-async def handle_edit_post_text(message: types.Message, state: FSMContext):
-    """Обработка отредактированного текста"""
-    if not message.text or len(message.text) < 10:
-        await send_temp_message(message, "❌ Текст слишком короткий")
+@router.message(CreatePostStates.waiting_for_text)
+async def receive_post_text(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Создание поста отменено.", reply_markup=get_admin_keyboard())
         return
     
     await state.update_data(post_text=message.text)
-    await state.set_state(AdminStates.creating_post_preview)
+    await state.set_state(CreatePostStates.waiting_for_photo)
+    
+    await message.answer(
+        "📸 Теперь отправьте <b>фото</b> для поста.\n"
+        "Или нажмите «Пропустить», чтобы опубликовать без фото.",
+        parse_mode="HTML",
+        reply_markup=types.ReplyKeyboardMarkup(
+            keyboard=[[types.KeyboardButton(text="⏩ Пропустить")], [types.KeyboardButton(text="❌ Отмена")]],
+            resize_keyboard=True
+        )
+    )
+
+@router.message(CreatePostStates.waiting_for_photo)
+async def receive_post_photo(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Создание поста отменено.", reply_markup=get_admin_keyboard())
+        return
     
     data = await state.get_data()
-    await show_preview(message, data.get("post_text", ""), data.get("post_photo_id"), state)
-    logger.info(f"Админ {message.from_user.id} обновил текст")
-
-
-@router.callback_query(F.data == "post_edit_photo", AdminStates.creating_post_preview)
-async def edit_post_photo(callback: types.CallbackQuery, state: FSMContext):
-    """Редактирование фото поста"""
-    await state.set_state(AdminStates.creating_post_photo)
-    await callback.message.answer(
-        "📸 <b>Изменение фото</b>\n\n"
-        "Отправь новое фото или /skip для удаления\n\n"
-        "❌ Отмена: /cancel",
-        parse_mode="HTML"
-    )
-    await callback.answer()
-    logger.info(f"Админ {callback.from_user.id} редактирует фото")
-
-
-@router.callback_query(F.data == "post_cancel", AdminStates.creating_post_preview)
-async def cancel_post_button(callback: types.CallbackQuery, state: FSMContext):
-    """Отмена создания поста"""
-    await state.clear()
-    await log_admin_action(callback.from_user.id, "cancel_post", "Отмена создания поста")
-    cancel_msg = await callback.message.answer("❌ Создание поста отменено")
-    asyncio.create_task(delete_message_safe(cancel_msg, 3))
-    await callback.answer()
-    logger.info(f"Админ {callback.from_user.id} отменил создание поста")
-
-
-# ========== ГАЛЕРЕЯ ==========
-@router.message(F.photo)
-async def handle_gallery_photo(message: types.Message, state: FSMContext):
-    """Обработка фото для галереи"""
-    user_id = message.from_user.id
+    post_text = data.get('post_text', '')
+    photo_file_id = None
     
-    if user_id not in ADMIN_IDS:
-        return
-    
-    current_state = await state.get_state()
-    
-    if current_state in (AdminStates.creating_post_photo, AdminStates.creating_post_preview, AdminStates.editing_post_photo):
-        return
-    
-    if current_state == AdminStates.adding_gift:
-        await send_temp_message(message, "❌ Сейчас ожидается текст для подарка")
-        return
-    
-    try:
-        photo = message.photo[-1]
-        await add_gallery_photo(photo.file_id, message.caption or "", user_id)
-        success_msg = await message.answer("✅ Фото добавлено в галерею!")
-        asyncio.create_task(delete_message_safe(success_msg, 5))
-        await log_admin_action(user_id, "add_gallery_photo", "Добавление фото в галерею")
-        logger.info(f"Админ {user_id} добавил фото в галерею")
-    except Exception as e:
-        logger.error(f"Ошибка сохранения фото: {e}")
-        error_msg = await message.answer(f"❌ Ошибка: {e}")
-        asyncio.create_task(delete_message_safe(error_msg, 5))
-
-
-# ========== HEALTH CHECK ==========
-@router.message(Command("health"))
-async def health_check(message: types.Message):
-    """Проверка состояния бота"""
-    if message.from_user.id != SUPER_ADMIN_ID:
-        await message.answer("❌ Только супер-админ")
-        return
-    
-    checks = {
-        "🤖 Бот": "✅ Работает",
-        "📊 Статистика": "⏳ Проверка...",
-        "📺 Канал": "⏳ Проверка...",
-        "💾 База данных": "⏳ Проверка..."
-    }
-    
-    status_msg = await message.answer("🔍 <b>Проверка состояния...</b>", parse_mode="HTML")
-    
-    try:
-        stats = await get_stats()
-        checks["📊 Статистика"] = "✅ OK" if stats else "❌ Ошибка"
-    except Exception as e:
-        checks["📊 Статистика"] = f"❌ {type(e).__name__}"
-    
-    if validate_channel_id(CHANNEL_ID):
-        has_perms = await check_bot_channel_permissions(CHANNEL_ID)
-        checks["📺 Канал"] = "✅ OK" if has_perms else "❌ Нет прав"
+    if message.text == "⏩ Пропустить":
+        photo_file_id = None
+    elif message.photo:
+        photo_file_id = message.photo[-1].file_id
     else:
-        checks["📺 Канал"] = "❌ Не настроен"
+        await message.answer("❌ Пожалуйста, отправьте фото или нажмите «Пропустить».")
+        return
+    
+    await state.update_data(photo_file_id=photo_file_id)
+    await state.set_state(CreatePostStates.preview)
+    
+    # Показываем предпросмотр
+    preview_text = f"📝 <b>Предпросмотр поста</b>\n\n{post_text}\n\n✅ <i>Всё верно?</i>"
+    
+    if photo_file_id:
+        await message.answer_photo(
+            photo_file_id,
+            caption=preview_text,
+            parse_mode="HTML",
+            reply_markup=get_confirm_post_keyboard()
+        )
+    else:
+        await message.answer(
+            preview_text,
+            parse_mode="HTML",
+            reply_markup=get_confirm_post_keyboard()
+        )
+
+@router.callback_query(lambda c: c.data == "confirm_post")
+async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    if not await is_admin(user_id):
+        await callback.answer("❌ Нет доступа.")
+        return
+    
+    data = await state.get_data()
+    post_text = data.get('post_text', '')
+    photo_file_id = data.get('photo_file_id')
+    
+    # Кнопки для поста
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    post_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📺 Twitch", url="https://twitch.tv/lana")],
+        [InlineKeyboardButton(text="📷 Instagram", url="https://instagram.com/lana")],
+        [InlineKeyboardButton(text="🎁 Подарки", url="https://t.me/GiftFlowDB_bot")],
+        [InlineKeyboardButton(text="🆘 Помощь", callback_data="help")]
+    ])
     
     try:
-        await get_stats()
-        checks["💾 База данных"] = "✅ OK"
+        if photo_file_id:
+            await callback.bot.send_photo(
+                CHANNEL_ID,
+                photo_file_id,
+                caption=post_text,
+                parse_mode="HTML",
+                reply_markup=post_keyboard
+            )
+        else:
+            await callback.bot.send_message(
+                CHANNEL_ID,
+                post_text,
+                parse_mode="HTML",
+                reply_markup=post_keyboard
+            )
+        
+        await log_admin_action(user_id, "create_post", f"Опубликован пост")
+        await callback.message.edit_text("✅ Пост успешно опубликован в канале!")
+        await state.clear()
+        
     except Exception as e:
-        checks["💾 База данных"] = f"❌ {type(e).__name__}"
+        logger.error(f"Ошибка публикации поста: {e}")
+        await callback.message.edit_text(f"❌ Ошибка публикации: {e}")
     
-    report = "🏥 <b>Health Check</b>\n\n"
-    for check, status in checks.items():
-        report += f"{check}: {status}\n"
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "cancel_post")
+async def cancel_post(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Создание поста отменено.")
+    await callback.answer()
+
+# ============ ДОБАВЛЕНИЕ ПОДАРКОВ ============
+
+@router.message(lambda message: message.text == "➕ Добавить подарок")
+async def add_gift_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if not await is_super_admin(user_id):
+        await message.answer("❌ Только для супер-админа.")
+        return
     
-    report += f"\n🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    await state.set_state(AddGiftStates.waiting_for_name)
+    await message.answer(
+        "➕ <b>Добавление подарка</b>\n\n"
+        "Введите <b>название</b> подарка:\n"
+        "Например: <code>Именной стрим</code>\n\n"
+        "Для отмены нажмите ❌ Отмена",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+
+@router.message(AddGiftStates.waiting_for_name)
+async def add_gift_name(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Добавление отменено.", reply_markup=get_admin_keyboard())
+        return
     
-    await status_msg.edit_text(report, parse_mode="HTML")
-    await log_admin_action(message.from_user.id, "health_check", "Проверка состояния бота")
-    logger.info(f"Админ {message.from_user.id} выполнил health check")
+    await state.update_data(name=message.text)
+    await state.set_state(AddGiftStates.waiting_for_price)
+    await message.answer("💰 Введите <b>цену</b> подарка в рублях (только число):", parse_mode="HTML")
+
+@router.message(AddGiftStates.waiting_for_price)
+async def add_gift_price(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Добавление отменено.", reply_markup=get_admin_keyboard())
+        return
+    
+    try:
+        price = int(message.text)
+        if price <= 0:
+            raise ValueError
+        await state.update_data(price=price)
+        await state.set_state(AddGiftStates.waiting_for_description)
+        await message.answer("📝 Введите <b>описание</b> подарка (или нажмите «Пропустить»):", parse_mode="HTML")
+    except ValueError:
+        await message.answer("❌ Введите корректное число (больше 0).")
+
+@router.message(AddGiftStates.waiting_for_description)
+async def add_gift_description(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Добавление отменено.", reply_markup=get_admin_keyboard())
+        return
+    
+    description = "" if message.text == "⏩ Пропустить" else message.text
+    await state.update_data(description=description)
+    await state.set_state(AddGiftStates.waiting_for_icon)
+    await message.answer("🎨 Выберите <b>иконку</b> для подарка (один emoji):\nНапример: 🎁 🎮 🎥 💎\nИли нажмите «Пропустить» для стандартной 🎁", parse_mode="HTML")
+
+@router.message(AddGiftStates.waiting_for_icon)
+async def add_gift_icon(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Добавление отменено.", reply_markup=get_admin_keyboard())
+        return
+    
+    icon = "🎁" if message.text == "⏩ Пропустить" else message.text.strip()
+    
+    data = await state.get_data()
+    gift_id = await add_gift(data['name'], data['price'], data['description'], icon)
+    
+    await log_admin_action(message.from_user.id, "add_gift", f"Добавлен подарок: {data['name']}")
+    
+    await message.answer(
+        f"✅ <b>Подарок добавлен!</b>\n\n"
+        f"{icon} <b>{data['name']}</b>\n"
+        f"💰 {data['price']}₽\n"
+        f"📝 {data['description'] if data['description'] else 'нет описания'}\n\n"
+        f"🆔 ID: {gift_id}",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
+    await state.clear()
+
+# ============ СТАТИСТИКА ============
+
+@router.message(lambda message: message.text == "📊 Статистика")
+async def show_statistics(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    stats = await get_stats()
+    pending = await get_pending_transactions(limit=1)
+    top_heroes = await get_top_heroes(limit=3)
+    
+    text = (
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"👥 <b>Пользователи:</b> {stats.get('total_users', 0)}\n"
+        f"🎁 <b>Всего донатов:</b> {stats.get('total_donations', 0)}\n"
+        f"💰 <b>Общая сумма:</b> {stats.get('total_amount', 0):,}₽\n"
+        f"📅 <b>За этот месяц:</b> {stats.get('month_amount', 0):,}₽\n"
+        f"⏳ <b>Ожидают:</b> {len(pending)} заказов\n\n"
+    )
+    
+    if top_heroes:
+        text += "🏆 <b>Топ-3 героев:</b>\n"
+        medals = ["🥇", "🥈", "🥉"]
+        for i, hero in enumerate(top_heroes[:3]):
+            username = hero.get('username') or f"user_{hero['user_id']}"
+            text += f"{medals[i]} {username} — {hero['total_amount']:,}₽\n"
+    
+    text += f"\n📊 <i>Обновлено: {stats.get('updated_at', datetime.now()).strftime('%d.%m.%Y %H:%M')}</i>"
+    
+    await message.answer(text, parse_mode="HTML")
+
+# ============ ТОП ГЕРОЕВ (АДМИН) ============
+
+@router.message(lambda message: message.text == "🏆 Топ героев (админ)")
+async def admin_top_heroes(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    heroes = await get_top_heroes(limit=20)
+    
+    if not heroes:
+        await message.answer("🏆 Топ героев пока пуст.")
+        return
+    
+    text = "🏆 <b>Топ героев канала</b>\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    
+    for i, hero in enumerate(heroes[:20]):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        username = hero.get('username') or f"user_{hero['user_id']}"
+        text += f"{medal} {username} — {hero['total_amount']:,}₽\n"
+    
+    await message.answer(text, parse_mode="HTML")
+
+# ============ УПРАВЛЕНИЕ АДМИНАМИ ============
+
+@router.message(lambda message: message.text == "👥 Управление админами")
+async def manage_admins(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_super_admin(user_id):
+        await message.answer("❌ Только для супер-админа.")
+        return
+    
+    admins = await get_all_admins()
+    
+    text = "👥 <b>Список администраторов</b>\n\n"
+    text += f"👑 Супер-админ: {SUPER_ADMIN_ID}\n"
+    text += f"🛠️ Менеджер: {SUPPORT_ADMIN_ID}\n\n"
+    
+    if admins:
+        text += "<b>Дополнительные админы:</b>\n"
+        for a in admins:
+            text += f"└ @{a['username'] or a['user_id']} (ID: {a['user_id']})\n"
+    else:
+        text += "Нет дополнительных админов.\n"
+    
+    text += "\n💡 <i>Добавить: /add_admin [ID]\nУдалить: /remove_admin [ID]</i>"
+    
+    await message.answer(text, parse_mode="HTML")
+
+@router.message(lambda message: message.text and message.text.startswith("/add_admin"))
+async def add_admin_command(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_super_admin(user_id):
+        await message.answer("❌ Только для супер-админа.")
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("❌ Используй: <code>/add_admin 123456789</code>", parse_mode="HTML")
+        return
+    
+    try:
+        new_admin_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+        return
+    
+    if new_admin_id == SUPER_ADMIN_ID or new_admin_id == SUPPORT_ADMIN_ID:
+        await message.answer("❌ Этот пользователь уже в списке главных админов.")
+        return
+    
+    success = await add_admin(new_admin_id)
+    
+    if success:
+        await log_admin_action(user_id, "add_admin", f"Добавлен админ {new_admin_id}")
+        await message.answer(f"✅ Администратор {new_admin_id} добавлен.")
+    else:
+        await message.answer("❌ Ошибка добавления.")
+
+@router.message(lambda message: message.text and message.text.startswith("/remove_admin"))
+async def remove_admin_command(message: types.Message):
+    user_id = message.from_user.id
+    if not await is_super_admin(user_id):
+        await message.answer("❌ Только для супер-админа.")
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("❌ Используй: <code>/remove_admin 123456789</code>", parse_mode="HTML")
+        return
+    
+    try:
+        admin_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+        return
+    
+    success = await remove_admin(admin_id)
+    
+    if success:
+        await log_admin_action(user_id, "remove_admin", f"Удалён админ {admin_id}")
+        await message.answer(f"✅ Администратор {admin_id} удалён.")
+    else:
+        await message.answer("❌ Администратор не найден.")
