@@ -2,556 +2,515 @@ import logging
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from datetime import datetime
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from config import SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, ADMIN_IDS, CHANNEL_ID
-from database import (
-    is_admin, is_super_admin, add_admin, remove_admin, get_all_admins,
-    get_pending_transactions, update_transaction_status, get_all_transactions,
-    add_gift, get_gallery_photos, add_gallery_photo,
-    delete_gallery_photo, get_stats, log_admin_action,
-    get_top_heroes, update_top_heroes
-)
-from keyboards import get_admin_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_main_keyboard
+from database import is_admin, is_super_admin, add_gallery_photo, get_gallery_photos, delete_gallery_photo, add_gift, get_all_gifts, update_gift
+from keyboards import get_admin_keyboard, get_main_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_back_to_admin_keyboard
+from config import SUPER_ADMIN_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-# ============ FSM СОСТОЯНИЯ ============
+# ============ СОЗДАНИЕ ПОСТА (FSM) ============
 
-class CreatePostStates(StatesGroup):
-    waiting_for_text = State()
-    waiting_for_photo = State()
-    preview = State()
-
-class AddGiftStates(StatesGroup):
-    waiting_for_name = State()
-    waiting_for_price = State()
-    waiting_for_description = State()
-    waiting_for_icon = State()
-
-# ============ ГЛАВНАЯ АДМИН-ПАНЕЛЬ ============
-
-@router.message(lambda message: message.text == "👑 Админ-панель")
-async def admin_panel(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ У вас нет доступа к админ-панели.", reply_markup=get_main_keyboard())
-        return
-    
-    keyboard = get_admin_keyboard()
-    await message.answer(
-        "🛠️ <b>Админ-панель</b>\n\nВыберите действие:",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-
-# ============ УПРАВЛЕНИЕ ЗАКАЗАМИ ============
-
-@router.message(lambda message: message.text == "📦 Управление заказами")
-async def manage_orders(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
-    transactions = await get_pending_transactions(limit=20)
-    
-    if not transactions:
-        await message.answer("📦 <b>Нет ожидающих заказов</b>\n\nВсе заказы обработаны.", parse_mode="HTML")
-        return
-    
-    text = "📦 <b>Ожидают подтверждения:</b>\n\n"
-    for t in transactions[:10]:
-        text += (
-            f"┌ <b>Заказ #{t['id']}</b>\n"
-            f"├ 🎁 {t['gift_name']}\n"
-            f"├ 💰 {t['amount']}₽\n"
-            f"├ 👤 @{t.get('username') or t['user_id']}\n"
-            f"├ 💳 {t.get('payment_method', 'не указан')}\n"
-            f"├ 🕐 {t['created_at'][:16]}\n"
-            f"└ ✅ <code>/approve {t['id']}</code>\n\n"
-        )
-    
-    text += "\n💡 <i>Используй команду /approve [номер_заказа] для подтверждения</i>"
-    await message.answer(text, parse_mode="HTML")
-
-@router.message(lambda message: message.text and message.text.startswith("/approve"))
-async def approve_order(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
-    parts = message.text.split()
-    if len(parts) != 2:
-        await message.answer("❌ Используй: <code>/approve 123</code>", parse_mode="HTML")
-        return
-    
-    try:
-        transaction_id = int(parts[1])
-    except ValueError:
-        await message.answer("❌ ID заказа должен быть числом.")
-        return
-    
-    transactions = await get_all_transactions(limit=100)
-    transaction = next((t for t in transactions if t['id'] == transaction_id), None)
-    
-    if not transaction:
-        await message.answer(f"❌ Заказ #{transaction_id} не найден.")
-        return
-    
-    if transaction['status'] == 'paid':
-        await message.answer(f"✅ Заказ #{transaction_id} уже подтверждён.")
-        return
-    
-    await update_transaction_status(transaction_id, 'paid', confirmed_by=user_id)
-    await log_admin_action(user_id, "approve_order", f"Заказ #{transaction_id}")
-    
-    position = await update_top_heroes(transaction['user_id'], transaction['amount'], transaction.get('username'))
-    
-    try:
-        user_text = f"✅ <b>Ваш заказ #{transaction_id} подтверждён!</b>\n\n🎁 {transaction['gift_name']}\n💰 Сумма: {transaction['amount']}₽\n\n"
-        if position:
-            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-            user_text += f"{medals.get(position, '🎖️')} <b>Вы в топ-{position} героев!</b>\n\n"
-        user_text += "❤️ Спасибо за поддержку Ланы!"
-        await message.bot.send_message(transaction['user_id'], user_text, parse_mode="HTML")
-    except Exception as e:
-        logger.error(f"Ошибка уведомления пользователя: {e}")
-    
-    if transaction['amount'] >= 5000:
-        try:
-            channel_text = f"🎉 <b>Новый донат!</b>\n\n@{transaction.get('username') or 'Аноним'} подарил(а) {transaction['gift_name']} на {transaction['amount']}₽\n❤️ Спасибо за поддержку!"
-            await message.bot.send_message(CHANNEL_ID, channel_text, parse_mode="HTML")
-        except Exception as e:
-            logger.error(f"Ошибка отправки в канал: {e}")
-    
-    await message.answer(f"✅ Заказ #{transaction_id} подтверждён!\nПользователь уведомлён.\nТоп героев обновлён.", parse_mode="HTML")
-
-# ============ УПРАВЛЕНИЕ ГАЛЕРЕЕЙ ============
-
-@router.message(lambda message: message.text == "🖼️ Управление галереей")
-async def manage_gallery(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
-    photos = await get_gallery_photos(limit=10)
-    
-    if not photos:
-        await message.answer("🖼️ <b>Галерея пуста</b>\n\nДобавьте фото командой /add_photo", parse_mode="HTML")
-        return
-    
-    text = "🖼️ <b>Галерея</b>\n\n"
-    for p in photos[:10]:
-        text += f"┌ <b>ID:</b> {p['id']}\n├ 📝 {p['description'][:30] if p['description'] else 'без описания'}\n└ 🗑️ <code>/del_photo {p['id']}</code>\n\n"
-    
-    text += "\n💡 <i>Добавить фото: /add_photo [описание]\nУдалить фото: /del_photo [ID]</i>"
-    await message.answer(text, parse_mode="HTML")
-
-@router.message(lambda message: message.text and message.text.startswith("/add_photo"))
-async def add_photo_command(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
-    await message.answer("📸 Отправьте фото для добавления в галерею.\n\nДля отмены нажмите ❌ Отмена", reply_markup=get_cancel_keyboard())
-
-@router.message(lambda message: message.photo and message.text != "❌ Отмена")
-async def receive_photo_for_gallery(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
-    photo = message.photo[-1]
-    file_id = photo.file_id
-    caption = message.caption or ""
-    
-    await add_gallery_photo(file_id, caption, user_id)
-    await log_admin_action(user_id, "add_photo", f"Добавлено фото: {caption[:50]}")
-    
-    await message.answer(f"✅ Фото добавлено в галерею!\n📝 Описание: {caption if caption else 'нет'}", reply_markup=get_admin_keyboard())
-
-@router.message(lambda message: message.text and message.text.startswith("/del_photo"))
-async def delete_photo_command(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
-    parts = message.text.split()
-    if len(parts) != 2:
-        await message.answer("❌ Используй: <code>/del_photo 123</code>", parse_mode="HTML")
-        return
-    
-    try:
-        photo_id = int(parts[1])
-    except ValueError:
-        await message.answer("❌ ID фото должен быть числом.")
-        return
-    
-    success = await delete_gallery_photo(photo_id)
-    
-    if success:
-        await log_admin_action(user_id, "delete_photo", f"Удалено фото #{photo_id}")
-        await message.answer(f"✅ Фото #{photo_id} удалено из галереи.")
-    else:
-        await message.answer(f"❌ Фото #{photo_id} не найдено.")
-
-# ============ СОЗДАНИЕ ПОСТОВ ============
+class PostStates(StatesGroup):
+    waiting_for_post_text = State()
+    waiting_for_post_photo = State()
+    waiting_for_post_confirmation = State()
 
 @router.message(lambda message: message.text == "✏️ Создать пост")
-async def create_post_start(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ Нет доступа.")
+async def create_post(message: types.Message, state: FSMContext):
+    """Начало создания поста"""
+    if not await is_super_admin(message.from_user.id):
+        await message.answer("❌ Только для супер-админа.")
         return
     
-    await state.set_state(CreatePostStates.waiting_for_text)
+    await state.set_state(PostStates.waiting_for_post_text)
     await message.answer(
-        "✏️ <b>Создание поста</b>\n\n"
-        "Отправьте <b>текст</b> поста.\n"
-        "Поддерживается HTML разметка.\n\n"
-        "Для отмены нажмите ❌ Отмена",
+        "📝 <b>Создание поста</b>\n\n"
+        "Отправьте <b>текст</b> для публикации.\n"
+        "Можно использовать HTML-разметку.\n\n"
+        "❌ Отмена - /cancel",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard()
     )
 
-@router.message(CreatePostStates.waiting_for_text)
-async def receive_post_text(message: types.Message, state: FSMContext):
+@router.message(PostStates.waiting_for_post_text)
+async def get_post_text(message: types.Message, state: FSMContext):
+    """Получение текста поста"""
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("❌ Создание поста отменено.", reply_markup=get_admin_keyboard())
         return
     
     await state.update_data(post_text=message.text)
-    await state.set_state(CreatePostStates.waiting_for_photo)
+    await state.set_state(PostStates.waiting_for_post_photo)
     
     await message.answer(
-        "📸 Теперь отправьте <b>фото</b> для поста.\n"
-        "Или нажмите «Пропустить», чтобы опубликовать без фото.",
+        "📸 <b>Отправьте фото для поста</b>\n\n"
+        "Отправьте одно фото или нажмите «Пропустить».\n\n"
+        "➡️ <b>Пропустить</b> - опубликовать без фото",
         parse_mode="HTML",
-        reply_markup=types.ReplyKeyboardMarkup(
-            keyboard=[[types.KeyboardButton(text="⏩ Пропустить")], [types.KeyboardButton(text="❌ Отмена")]],
-            resize_keyboard=True
-        )
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏭️ Пропустить фото", callback_data="skip_photo")]
+        ])
     )
 
-@router.message(CreatePostStates.waiting_for_photo)
-async def receive_post_photo(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("❌ Создание поста отменено.", reply_markup=get_admin_keyboard())
-        return
+@router.callback_query(lambda c: c.data == "skip_photo")
+async def skip_photo(callback: types.CallbackQuery, state: FSMContext):
+    """Пропуск фото"""
+    await state.update_data(post_photo=None)
+    await state.set_state(PostStates.waiting_for_post_confirmation)
     
     data = await state.get_data()
     post_text = data.get('post_text', '')
-    photo_file_id = None
     
-    if message.text == "⏩ Пропустить":
-        photo_file_id = None
-    elif message.photo:
-        photo_file_id = message.photo[-1].file_id
-    else:
-        await message.answer("❌ Пожалуйста, отправьте фото или нажмите «Пропустить».")
-        return
+    await callback.message.delete()
     
-    await state.update_data(photo_file_id=photo_file_id)
-    await state.set_state(CreatePostStates.preview)
+    await callback.message.answer(
+        f"📢 <b>Предпросмотр поста</b>\n\n{post_text}\n\n"
+        f"⚠️ <b>Внимание:</b> Пост будет отправлен в канал.",
+        parse_mode="HTML",
+        reply_markup=get_confirm_post_keyboard()
+    )
+    await callback.answer()
+
+@router.message(PostStates.waiting_for_post_photo, lambda message: message.photo)
+async def get_post_photo(message: types.Message, state: FSMContext):
+    """Получение фото для поста"""
+    photo = message.photo[-1]
+    await state.update_data(post_photo=photo.file_id)
+    await state.set_state(PostStates.waiting_for_post_confirmation)
     
-    preview_text = f"📝 <b>Предпросмотр поста</b>\n\n{post_text}\n\n✅ <i>Всё верно?</i>"
+    data = await state.get_data()
+    post_text = data.get('post_text', '')
+    post_photo = data.get('post_photo')
     
-    if photo_file_id:
+    if post_photo:
         await message.answer_photo(
-            photo_file_id,
-            caption=preview_text,
+            post_photo,
+            caption=f"📢 <b>Предпросмотр поста</b>\n\n{post_text}\n\n⚠️ <b>Внимание:</b> Пост будет отправлен в канал.",
             parse_mode="HTML",
             reply_markup=get_confirm_post_keyboard()
         )
     else:
         await message.answer(
-            preview_text,
+            f"📢 <b>Предпросмотр поста</b>\n\n{post_text}\n\n⚠️ <b>Внимание:</b> Пост будет отправлен в канал.",
             parse_mode="HTML",
             reply_markup=get_confirm_post_keyboard()
         )
 
+@router.message(PostStates.waiting_for_post_photo)
+async def invalid_post_photo(message: types.Message):
+    """Если прислали не фото"""
+    await message.answer(
+        "❌ Пожалуйста, отправьте <b>фото</b> или нажмите «Пропустить».",
+        parse_mode="HTML"
+    )
+
 @router.callback_query(lambda c: c.data == "confirm_post")
 async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    if not await is_admin(user_id):
-        await callback.answer("❌ Нет доступа.")
-        return
-    
+    """Подтверждение публикации поста"""
     data = await state.get_data()
     post_text = data.get('post_text', '')
-    photo_file_id = data.get('photo_file_id')
+    post_photo = data.get('post_photo')
     
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    
-    post_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📺 Twitch", url="https://twitch.tv/lana")],
-        [InlineKeyboardButton(text="📷 Instagram", url="https://instagram.com/lana")],
-        [InlineKeyboardButton(text="🎁 Подарки", url="https://t.me/GiftFlowDB_bot")],
-        [InlineKeyboardButton(text="🆘 Помощь", callback_data="help")]
-    ])
+    from config import CHANNEL_ID
     
     try:
-        if photo_file_id:
+        if post_photo:
             await callback.bot.send_photo(
                 CHANNEL_ID,
-                photo_file_id,
+                post_photo,
                 caption=post_text,
-                parse_mode="HTML",
-                reply_markup=post_keyboard
+                parse_mode="HTML"
             )
         else:
             await callback.bot.send_message(
                 CHANNEL_ID,
                 post_text,
-                parse_mode="HTML",
-                reply_markup=post_keyboard
+                parse_mode="HTML"
             )
         
-        await log_admin_action(user_id, "create_post", f"Опубликован пост")
-        await callback.message.edit_text("✅ Пост успешно опубликован в канале!")
-        await state.clear()
+        await callback.message.edit_text(
+            "✅ <b>Пост успешно опубликован в канале!</b>",
+            parse_mode="HTML"
+        )
+        await callback.answer("Пост опубликован!")
         
     except Exception as e:
         logger.error(f"Ошибка публикации поста: {e}")
-        await callback.message.edit_text(f"❌ Ошибка публикации: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка публикации:</b>\n<code>{e}</code>",
+            parse_mode="HTML"
+        )
+        await callback.answer()
     
+    await state.clear()
+    
+    await callback.bot.send_message(
+        callback.from_user.id,
+        "🛠️ <b>Админ-панель</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
+
+@router.callback_query(lambda c: c.data == "edit_post_text")
+async def edit_post_text(callback: types.CallbackQuery, state: FSMContext):
+    """Редактирование текста поста"""
+    await state.set_state(PostStates.waiting_for_post_text)
+    await callback.message.delete()
+    await callback.message.answer(
+        "📝 <b>Отправьте НОВЫЙ текст для поста</b>\n\n"
+        "❌ Отмена - /cancel",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "edit_post_photo")
+async def edit_post_photo(callback: types.CallbackQuery, state: FSMContext):
+    """Редактирование фото поста"""
+    await state.set_state(PostStates.waiting_for_post_photo)
+    await callback.message.delete()
+    await callback.message.answer(
+        "📸 <b>Отправьте НОВОЕ фото для поста</b>\n\n"
+        "Отправьте одно фото или нажмите «Пропустить».",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏭️ Пропустить фото", callback_data="skip_photo")]
+        ])
+    )
     await callback.answer()
 
 @router.callback_query(lambda c: c.data == "cancel_post")
 async def cancel_post(callback: types.CallbackQuery, state: FSMContext):
+    """Отмена создания поста"""
     await state.clear()
     await callback.message.edit_text("❌ Создание поста отменено.")
+    await callback.bot.send_message(
+        callback.from_user.id,
+        "🛠️ <b>Админ-панель</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
     await callback.answer()
 
-# ============ ДОБАВЛЕНИЕ ПОДАРКОВ ============
+# ============ УПРАВЛЕНИЕ ГАЛЕРЕЕЙ ============
+
+@router.message(lambda message: message.text == "🖼️ Управление галереей")
+async def manage_gallery(message: types.Message):
+    """Управление галереей"""
+    if not await is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    images = await get_gallery_photos(limit=20)
+    
+    if not images:
+        await message.answer(
+            "🖼️ <b>Галерея пуста</b>\n\n"
+            "Добавьте фото командой /add_photo",
+            parse_mode="HTML"
+        )
+        return
+    
+    text = "🖼️ <b>Галерея</b>\n\n"
+    for img in images[:10]:
+        text += f"📷 ID: {img['id']} | {img['description'][:30] if img['description'] else 'Без описания'}\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить фото", callback_data="add_gallery_photo")],
+        [InlineKeyboardButton(text="❌ Удалить фото", callback_data="delete_gallery_photo")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
+    ])
+    
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+@router.callback_query(lambda c: c.data == "add_gallery_photo")
+async def add_gallery_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
+    """Запрос на добавление фото в галерею"""
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа!", show_alert=True)
+        return
+    
+    await state.set_state("waiting_for_gallery_photo")
+    await callback.message.edit_text(
+        "📸 <b>Добавление фото в галерею</b>\n\n"
+        "Отправьте фото.\n"
+        "После отправки можно добавить описание.\n\n"
+        "❌ Отмена - /cancel",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(lambda message: message.photo, StateFilter="waiting_for_gallery_photo")
+async def save_gallery_photo(message: types.Message, state: FSMContext):
+    """Сохранение фото в галерею"""
+    photo = message.photo[-1]
+    await state.update_data(gallery_photo_id=photo.file_id)
+    await state.set_state("waiting_for_gallery_description")
+    await message.answer(
+        "📝 <b>Добавьте описание к фото</b>\n\n"
+        "Отправьте текст или нажмите «Пропустить».\n\n"
+        "⏭️ Пропустить - /skip",
+        parse_mode="HTML"
+    )
+
+@router.message(lambda message: message.text == "/skip", StateFilter="waiting_for_gallery_description")
+async def skip_gallery_description(message: types.Message, state: FSMContext):
+    """Пропуск описания"""
+    data = await state.get_data()
+    photo_id = data.get('gallery_photo_id')
+    
+    await add_gallery_photo(photo_id, "", message.from_user.id)
+    
+    await state.clear()
+    await message.answer(
+        "✅ <b>Фото добавлено в галерею!</b>\n\n"
+        "Описание: нет",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
+
+@router.message(StateFilter("waiting_for_gallery_description"))
+async def save_gallery_description(message: types.Message, state: FSMContext):
+    """Сохранение описания"""
+    data = await state.get_data()
+    photo_id = data.get('gallery_photo_id')
+    
+    await add_gallery_photo(photo_id, message.text, message.from_user.id)
+    
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Фото добавлено в галерею!</b>\n\n"
+        f"Описание: {message.text}",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
+
+@router.callback_query(lambda c: c.data == "delete_gallery_photo")
+async def delete_gallery_photo_prompt(callback: types.CallbackQuery):
+    """Запрос ID фото для удаления"""
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа!", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "❌ <b>Удаление фото из галереи</b>\n\n"
+        "Отправьте ID фото для удаления.\n\n"
+        "ID можно посмотреть в списке галереи.\n\n"
+        "❌ Отмена - /cancel",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(lambda message: message.text and message.text.isdigit())
+async def delete_gallery_photo_by_id(message: types.Message):
+    """Удаление фото по ID"""
+    if not await is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    photo_id = int(message.text)
+    success = await delete_gallery_photo(photo_id)
+    
+    if success:
+        await message.answer(f"✅ Фото #{photo_id} удалено из галереи.", reply_markup=get_admin_keyboard())
+    else:
+        await message.answer(f"❌ Фото #{photo_id} не найдено.", reply_markup=get_admin_keyboard())
+
+# ============ ДОБАВЛЕНИЕ ПОДАРКА ============
+
+class GiftStates(StatesGroup):
+    waiting_for_gift_name = State()
+    waiting_for_gift_price = State()
+    waiting_for_gift_description = State()
+    waiting_for_gift_icon = State()
 
 @router.message(lambda message: message.text == "➕ Добавить подарок")
 async def add_gift_start(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    if not await is_super_admin(user_id):
+    """Начало добавления подарка"""
+    if not await is_super_admin(message.from_user.id):
         await message.answer("❌ Только для супер-админа.")
         return
     
-    await state.set_state(AddGiftStates.waiting_for_name)
+    await state.set_state(GiftStates.waiting_for_gift_name)
     await message.answer(
-        "➕ <b>Добавление подарка</b>\n\n"
+        "🎁 <b>Добавление подарка</b>\n\n"
         "Введите <b>название</b> подарка:\n"
-        "Например: <code>Именной стрим</code>\n\n"
-        "Для отмены нажмите ❌ Отмена",
+        "Пример: Конфетка\n\n"
+        "❌ Отмена - /cancel",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard()
     )
 
-@router.message(AddGiftStates.waiting_for_name)
-async def add_gift_name(message: types.Message, state: FSMContext):
+@router.message(GiftStates.waiting_for_gift_name)
+async def get_gift_name(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("❌ Добавление отменено.", reply_markup=get_admin_keyboard())
+        await message.answer("❌ Отменено.", reply_markup=get_admin_keyboard())
         return
     
-    await state.update_data(name=message.text)
-    await state.set_state(AddGiftStates.waiting_for_price)
-    await message.answer("💰 Введите <b>цену</b> подарка в рублях (только число):", parse_mode="HTML")
+    await state.update_data(gift_name=message.text)
+    await state.set_state(GiftStates.waiting_for_gift_price)
+    await message.answer(
+        "💰 Введите <b>цену</b> подарка (число):\n"
+        "Пример: 100\n\n"
+        "❌ Отмена - /cancel",
+        parse_mode="HTML"
+    )
 
-@router.message(AddGiftStates.waiting_for_price)
-async def add_gift_price(message: types.Message, state: FSMContext):
+@router.message(GiftStates.waiting_for_gift_price)
+async def get_gift_price(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("❌ Добавление отменено.", reply_markup=get_admin_keyboard())
+        await message.answer("❌ Отменено.", reply_markup=get_admin_keyboard())
         return
     
     try:
         price = int(message.text)
-        if price <= 0:
-            raise ValueError
-        await state.update_data(price=price)
-        await state.set_state(AddGiftStates.waiting_for_description)
-        await message.answer("📝 Введите <b>описание</b> подарка (или нажмите «Пропустить»):", parse_mode="HTML")
+        await state.update_data(gift_price=price)
+        await state.set_state(GiftStates.waiting_for_gift_description)
+        await message.answer(
+            "📝 Введите <b>описание</b> подарка:\n"
+            "Пример: Маленькая сладость для Ланы\n\n"
+            "Или нажмите «Пропустить» - /skip",
+            parse_mode="HTML"
+        )
     except ValueError:
-        await message.answer("❌ Введите корректное число (больше 0).")
+        await message.answer("❌ Цена должна быть числом. Попробуйте еще раз:")
 
-@router.message(AddGiftStates.waiting_for_description)
-async def add_gift_description(message: types.Message, state: FSMContext):
+@router.message(lambda message: message.text == "/skip", StateFilter(GiftStates.waiting_for_gift_description))
+async def skip_gift_description(message: types.Message, state: FSMContext):
+    await state.update_data(gift_description="")
+    await state.set_state(GiftStates.waiting_for_gift_icon)
+    await message.answer(
+        "🎨 Введите <b>иконку</b> для подарка (один emoji):\n"
+        "Пример: 🎁 🍬 ☕\n\n"
+        "Или нажмите «Пропустить» - /skip",
+        parse_mode="HTML"
+    )
+
+@router.message(GiftStates.waiting_for_gift_description)
+async def get_gift_description(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("❌ Добавление отменено.", reply_markup=get_admin_keyboard())
+        await message.answer("❌ Отменено.", reply_markup=get_admin_keyboard())
         return
     
-    description = "" if message.text == "⏩ Пропустить" else message.text
-    await state.update_data(description=description)
-    await state.set_state(AddGiftStates.waiting_for_icon)
-    await message.answer("🎨 Выберите <b>иконку</b> для подарка (один emoji):\nНапример: 🎁 🎮 🎥 💎\nИли нажмите «Пропустить» для стандартной 🎁", parse_mode="HTML")
+    await state.update_data(gift_description=message.text)
+    await state.set_state(GiftStates.waiting_for_gift_icon)
+    await message.answer(
+        "🎨 Введите <b>иконку</b> для подарка (один emoji):\n"
+        "Пример: 🎁 🍬 ☕\n\n"
+        "Или нажмите «Пропустить» - /skip",
+        parse_mode="HTML"
+    )
 
-@router.message(AddGiftStates.waiting_for_icon)
-async def add_gift_icon(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("❌ Добавление отменено.", reply_markup=get_admin_keyboard())
-        return
-    
-    icon = "🎁" if message.text == "⏩ Пропустить" else message.text.strip()
-    
+@router.message(lambda message: message.text == "/skip", StateFilter(GiftStates.waiting_for_gift_icon))
+async def skip_gift_icon(message: types.Message, state: FSMContext):
+    await state.update_data(gift_icon="🎁")
     data = await state.get_data()
-    gift_id = await add_gift(data['name'], data['price'], data['description'], icon)
     
-    await log_admin_action(message.from_user.id, "add_gift", f"Добавлен подарок: {data['name']}")
+    gift_id = await add_gift(
+        name=data['gift_name'],
+        price=data['gift_price'],
+        description=data.get('gift_description', ''),
+        icon=data.get('gift_icon', '🎁')
+    )
     
+    await state.clear()
     await message.answer(
         f"✅ <b>Подарок добавлен!</b>\n\n"
-        f"{icon} <b>{data['name']}</b>\n"
-        f"💰 {data['price']}₽\n"
-        f"📝 {data['description'] if data['description'] else 'нет описания'}\n\n"
+        f"🎁 {data['gift_name']}\n"
+        f"💰 {data['gift_price']}₽\n"
+        f"📝 {data.get('gift_description', 'Без описания')}\n"
         f"🆔 ID: {gift_id}",
         parse_mode="HTML",
         reply_markup=get_admin_keyboard()
     )
-    await state.clear()
 
-# ============ СТАТИСТИКА ============
-
-@router.message(lambda message: message.text == "📊 Статистика")
-async def show_statistics(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ Нет доступа.")
+@router.message(GiftStates.waiting_for_gift_icon)
+async def get_gift_icon(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Отменено.", reply_markup=get_admin_keyboard())
         return
     
-    stats = await get_stats()
-    pending = await get_pending_transactions(limit=1)
-    top_heroes = await get_top_heroes(limit=3)
+    icon = message.text.strip()
+    if len(icon) > 2:
+        icon = "🎁"
     
-    text = (
-        f"📊 <b>Статистика бота</b>\n\n"
-        f"👥 <b>Пользователи:</b> {stats.get('total_users', 0)}\n"
-        f"🎁 <b>Всего донатов:</b> {stats.get('total_donations', 0)}\n"
-        f"💰 <b>Общая сумма:</b> {stats.get('total_amount', 0):,}₽\n"
-        f"📅 <b>За этот месяц:</b> {stats.get('month_amount', 0):,}₽\n"
-        f"⏳ <b>Ожидают:</b> {len(pending)} заказов\n\n"
+    await state.update_data(gift_icon=icon)
+    data = await state.get_data()
+    
+    gift_id = await add_gift(
+        name=data['gift_name'],
+        price=data['gift_price'],
+        description=data.get('gift_description', ''),
+        icon=data.get('gift_icon', '🎁')
     )
     
-    if top_heroes:
-        text += "🏆 <b>Топ-3 героев:</b>\n"
-        medals = ["🥇", "🥈", "🥉"]
-        for i, hero in enumerate(top_heroes[:3]):
-            username = hero.get('username') or f"user_{hero['user_id']}"
-            text += f"{medals[i]} {username} — {hero['total_amount']:,}₽\n"
-    
-    text += f"\n📊 <i>Обновлено: {stats.get('updated_at', datetime.now()).strftime('%d.%m.%Y %H:%M')}</i>"
-    
-    await message.answer(text, parse_mode="HTML")
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Подарок добавлен!</b>\n\n"
+        f"{icon} {data['gift_name']}\n"
+        f"💰 {data['gift_price']}₽\n"
+        f"📝 {data.get('gift_description', 'Без описания')}\n"
+        f"🆔 ID: {gift_id}",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
 
 # ============ ТОП ГЕРОЕВ (АДМИН) ============
 
 @router.message(lambda message: message.text == "🏆 Топ героев (админ)")
 async def admin_top_heroes(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
+    """Просмотр топа героев для админа"""
+    if not await is_admin(message.from_user.id):
         await message.answer("❌ Нет доступа.")
         return
     
+    from database import get_top_heroes
     heroes = await get_top_heroes(limit=20)
     
     if not heroes:
         await message.answer("🏆 Топ героев пока пуст.")
         return
     
-    text = "🏆 <b>Топ героев канала</b>\n\n"
-    medals = ["🥇", "🥈", "🥉"]
-    
-    for i, hero in enumerate(heroes[:20]):
-        medal = medals[i] if i < 3 else f"{i+1}."
+    text = "🏆 <b>Топ героев (админ-панель)</b>\n\n"
+    for i, hero in enumerate(heroes[:10], 1):
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        medal = medals.get(i, f"{i}.")
         username = hero.get('username') or f"user_{hero['user_id']}"
-        text += f"{medal} {username} — {hero['total_amount']:,}₽\n"
+        text += f"{medal} @{username} — {hero['total_amount']:,}₽\n"
     
     await message.answer(text, parse_mode="HTML")
 
-# ============ УПРАВЛЕНИЕ АДМИНАМИ ============
+# ============ ВОЗВРАТ В АДМИНКУ ============
 
-@router.message(lambda message: message.text == "👥 Управление админами")
-async def manage_admins(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_super_admin(user_id):
-        await message.answer("❌ Только для супер-админа.")
+@router.callback_query(lambda c: c.data == "back_to_admin")
+async def back_to_admin(callback: types.CallbackQuery):
+    """Возврат в админ-панель"""
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа!", show_alert=True)
         return
     
-    admins = await get_all_admins()
-    
-    text = "👥 <b>Список администраторов</b>\n\n"
-    text += f"👑 Супер-админ: {SUPER_ADMIN_ID}\n"
-    text += f"🛠️ Менеджер: {SUPPORT_ADMIN_ID}\n\n"
-    
-    if admins:
-        text += "<b>Дополнительные админы:</b>\n"
-        for a in admins:
-            text += f"└ @{a['username'] or a['user_id']} (ID: {a['user_id']})\n"
-    else:
-        text += "Нет дополнительных админов.\n"
-    
-    text += "\n💡 <i>Добавить: /add_admin [ID]\nУдалить: /remove_admin [ID]</i>"
-    
-    await message.answer(text, parse_mode="HTML")
+    await callback.message.edit_text(
+        "🛠️ <b>Админ-панель</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
+    await callback.answer()
 
-@router.message(lambda message: message.text and message.text.startswith("/add_admin"))
-async def add_admin_command(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_super_admin(user_id):
-        await message.answer("❌ Только для супер-админа.")
-        return
-    
-    parts = message.text.split()
-    if len(parts) != 2:
-        await message.answer("❌ Используй: <code>/add_admin 123456789</code>", parse_mode="HTML")
-        return
-    
-    try:
-        new_admin_id = int(parts[1])
-    except ValueError:
-        await message.answer("❌ ID должен быть числом.")
-        return
-    
-    if new_admin_id == SUPER_ADMIN_ID or new_admin_id == SUPPORT_ADMIN_ID:
-        await message.answer("❌ Этот пользователь уже в списке главных админов.")
-        return
-    
-    success = await add_admin(new_admin_id)
-    
-    if success:
-        await log_admin_action(user_id, "add_admin", f"Добавлен админ {new_admin_id}")
-        await message.answer(f"✅ Администратор {new_admin_id} добавлен.")
-    else:
-        await message.answer("❌ Ошибка добавления.")
+# ============ ОТМЕНА ============
 
-@router.message(lambda message: message.text and message.text.startswith("/remove_admin"))
-async def remove_admin_command(message: types.Message):
-    user_id = message.from_user.id
-    if not await is_super_admin(user_id):
-        await message.answer("❌ Только для супер-админа.")
-        return
-    
-    parts = message.text.split()
-    if len(parts) != 2:
-        await message.answer("❌ Используй: <code>/remove_admin 123456789</code>", parse_mode="HTML")
-        return
-    
-    try:
-        admin_id = int(parts[1])
-    except ValueError:
-        await message.answer("❌ ID должен быть числом.")
-        return
-    
-    success = await remove_admin(admin_id)
-    
-    if success:
-        await log_admin_action(user_id, "remove_admin", f"Удалён админ {admin_id}")
-        await message.answer(f"✅ Администратор {admin_id} удалён.")
+@router.message(lambda message: message.text == "/cancel")
+async def cancel_action(message: types.Message, state: FSMContext):
+    """Отмена текущего действия"""
+    await state.clear()
+    if await is_admin(message.from_user.id):
+        await message.answer("❌ Действие отменено.", reply_markup=get_admin_keyboard())
     else:
-        await message.answer("❌ Администратор не найден.")
+        await message.answer("❌ Действие отменено.", reply_markup=get_main_keyboard())
