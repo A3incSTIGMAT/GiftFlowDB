@@ -2,35 +2,29 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 
 # ========== REPLY КЛАВИАТУРЫ ==========
 
-def get_main_keyboard(is_admin=False):
+def get_main_keyboard():
     """Клавиатура главного меню для пользователей"""
-    buttons = [
-        [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
-        [KeyboardButton(text="🎁 Каталог подарков")],
-        [KeyboardButton(text="🏆 Топ героев"), KeyboardButton(text="🎁 О конкурсе")],
-        [KeyboardButton(text="🆘 Помощь")]
-    ]
-    
-    # Кнопка админ-панели показывается ТОЛЬКО если пользователь админ
-    if is_admin:
-        buttons.append([KeyboardButton(text="👑 Админ-панель")])
-    
-    # Кнопка "Главное меню" не нужна в главном меню (она вызывает саму себя)
     keyboard = ReplyKeyboardMarkup(
-        keyboard=buttons,
+        keyboard=[
+            [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
+            [KeyboardButton(text="🎁 Каталог подарков")],
+            [KeyboardButton(text="🏆 Топ героев"), KeyboardButton(text="🎁 О конкурсе")],
+            [KeyboardButton(text="🆘 Помощь"), KeyboardButton(text="👑 Админ-панель")],
+            [KeyboardButton(text="Главное меню")]
+        ],
         resize_keyboard=True
     )
     return keyboard
 
 def get_admin_keyboard():
-    """Клавиатура админ-панели (только для супер-админа)"""
+    """Клавиатура админ-панели"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📦 Управление заказами")],
             [KeyboardButton(text="🖼️ Управление галереей")],
             [KeyboardButton(text="✏️ Создать пост"), KeyboardButton(text="📊 Статистика")],
             [KeyboardButton(text="🏆 Топ героев (админ)"), KeyboardButton(text="➕ Добавить подарок")],
-            [KeyboardButton(text="🔙 Выйти из админки")]
+            [KeyboardButton(text="🎁 Главное меню")]
         ],
         resize_keyboard=True
     )
@@ -46,7 +40,8 @@ def get_cancel_keyboard():
     )
     return keyboard
 
-# ========== INLINE КЛАВИАТУРЫ (остаются без изменений) ==========
+
+# ========== INLINE КЛАВИАТУРЫ ==========
 
 def get_gifts_keyboard(gifts):
     """Клавиатура каталога подарков"""
