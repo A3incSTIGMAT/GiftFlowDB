@@ -1,8 +1,7 @@
-import sqlite3
+import os
 import aiosqlite
-import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from config import DB_PATH, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
 
@@ -16,8 +15,14 @@ async def get_db():
 
 async def init_db():
     """Инициализация базы данных: создание всех таблиц"""
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+        logger.info(f"✅ Создана папка для БД: {db_dir}")
+    
     async with aiosqlite.connect(DB_PATH) as db:
-        # Таблица пользователей
+        await db.execute("PRAGMA journal_mode=WAL")
+        
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +35,6 @@ async def init_db():
             )
         """)
         
-        # Таблица подарков
         await db.execute("""
             CREATE TABLE IF NOT EXISTS gifts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +47,6 @@ async def init_db():
             )
         """)
         
-        # Таблица транзакций (заказов)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,13 +59,10 @@ async def init_db():
                 payment_details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 confirmed_at TIMESTAMP,
-                confirmed_by INTEGER,
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (gift_id) REFERENCES gifts(id)
+                confirmed_by INTEGER
             )
         """)
         
-        # Таблица топ героев (кэш донатеров)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS top_heroes (
                 user_id INTEGER PRIMARY KEY,
@@ -73,7 +73,6 @@ async def init_db():
             )
         """)
         
-        # Таблица галереи
         await db.execute("""
             CREATE TABLE IF NOT EXISTS gallery (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,7 +83,6 @@ async def init_db():
             )
         """)
         
-        # Таблица администраторов
         await db.execute("""
             CREATE TABLE IF NOT EXISTS admins (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,7 +93,6 @@ async def init_db():
             )
         """)
         
-        # Таблица логов действий админов
         await db.execute("""
             CREATE TABLE IF NOT EXISTS admin_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,16 +103,12 @@ async def init_db():
             )
         """)
         
-        # Индексы для ускорения запросов
         await db.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_top_heroes_amount ON top_heroes(total_amount DESC)")
         
         await db.commit()
-        
-        # Добавляем начальные подарки, если их нет
         await init_default_gifts()
-        
         logger.info("✅ База данных инициализирована")
 
 async def init_default_gifts():
@@ -231,12 +224,11 @@ async def update_gift(gift_id: int, **kwargs):
             await db.execute(query, values)
             await db.commit()
 
-# ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ (ЗАКАЗОВ) ============
+# ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ ============
 
 async def add_transaction(user_id: int, gift_id: int, amount: int, payment_method: str = None) -> int:
     """Добавить новую транзакцию (заказ)"""
     async with aiosqlite.connect(DB_PATH) as db:
-        # Получаем название подарка
         gift = await get_gift_by_id(gift_id)
         gift_name = gift['name'] if gift else f"Подарок #{gift_id}"
         
@@ -330,12 +322,10 @@ async def get_all_transactions(limit: int = 100) -> List[Dict[str, Any]]:
 async def update_top_heroes(user_id: int, amount: int, username: str = None):
     """Обновить топ героев после доната"""
     async with aiosqlite.connect(DB_PATH) as db:
-        # Проверяем, существует ли пользователь в топе
         cursor = await db.execute("SELECT total_amount FROM top_heroes WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
         
         if row:
-            # Обновляем существующего
             new_total = row[0] + amount
             await db.execute("""
                 UPDATE top_heroes 
@@ -343,7 +333,6 @@ async def update_top_heroes(user_id: int, amount: int, username: str = None):
                 WHERE user_id = ?
             """, (new_total, datetime.now(), datetime.now(), username, user_id))
         else:
-            # Добавляем нового
             await db.execute("""
                 INSERT INTO top_heroes (user_id, username, total_amount, last_donate)
                 VALUES (?, ?, ?, ?)
@@ -351,7 +340,6 @@ async def update_top_heroes(user_id: int, amount: int, username: str = None):
         
         await db.commit()
         
-        # Проверяем, вошёл ли пользователь в топ-3
         cursor = await db.execute("""
             SELECT user_id, total_amount FROM top_heroes 
             ORDER BY total_amount DESC 
@@ -359,11 +347,14 @@ async def update_top_heroes(user_id: int, amount: int, username: str = None):
         """)
         top3 = await cursor.fetchall()
         
-        # Возвращаем позицию пользователя в топе
         for i, (uid, _) in enumerate(top3):
             if uid == user_id:
-                return i + 1  # 1, 2 или 3
+                return i + 1
         return None
+
+async def update_top_hero(user_id: int, amount: int, username: str = None):
+    """Обновить топ героев (алиас для update_top_heroes)"""
+    return await update_top_heroes(user_id, amount, username)
 
 async def get_top_heroes(limit: int = 10) -> List[Dict[str, Any]]:
     """Получить топ героев"""
@@ -443,15 +434,10 @@ async def is_super_admin(user_id: int) -> bool:
 
 async def is_admin(user_id: int) -> bool:
     """Проверка, является ли пользователь админом или менеджером"""
-    # Сначала проверяем супер-админа
     if user_id == SUPER_ADMIN_ID:
         return True
-    
-    # Проверяем менеджера из конфига
     if user_id == SUPPORT_ADMIN_ID:
         return True
-    
-    # Проверяем в таблице admins
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
@@ -505,19 +491,15 @@ async def update_stats_cache():
     """Обновить кэш статистики"""
     global _cache_stats
     async with aiosqlite.connect(DB_PATH) as db:
-        # Общее количество пользователей
         cursor = await db.execute("SELECT COUNT(*) FROM users")
         total_users = (await cursor.fetchone())[0]
         
-        # Общее количество донатов
         cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'paid'")
         total_donations = (await cursor.fetchone())[0]
         
-        # Общая сумма донатов
         cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'paid'")
         total_amount = (await cursor.fetchone())[0] or 0
         
-        # Донаты за текущий месяц
         first_day = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         cursor = await db.execute("""
             SELECT SUM(amount) FROM transactions 
