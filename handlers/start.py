@@ -5,7 +5,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from database import register_user
-from keyboards import get_admin_keyboard
 from config import SUPER_ADMIN_ID
 
 logger = logging.getLogger(__name__)
@@ -20,6 +19,33 @@ def get_user_menu_keyboard():
             [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
             [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
             [KeyboardButton(text="❓ О конкурсе"), KeyboardButton(text="🆘 Помощь")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
+def get_user_menu_keyboard_with_admin():
+    """Клавиатура основного меню для админа (с кнопкой админ-панели)"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
+            [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
+            [KeyboardButton(text="❓ О конкурсе"), KeyboardButton(text="🆘 Помощь")],
+            [KeyboardButton(text="👑 Админ-панель")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
+def get_admin_panel_keyboard():
+    """Клавиатура админ-панели"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📦 Управление заказами")],
+            [KeyboardButton(text="🖼️ Управление галереей")],
+            [KeyboardButton(text="✏️ Создать пост"), KeyboardButton(text="📊 Статистика")],
+            [KeyboardButton(text="🏆 Топ героев (админ)"), KeyboardButton(text="➕ Добавить подарок")],
+            [KeyboardButton(text="🏠 Главное меню")]
         ],
         resize_keyboard=True
     )
@@ -73,7 +99,7 @@ async def start_command(message: types.Message, state: FSMContext):
         )
         
         if user_id == SUPER_ADMIN_ID:
-            await message.answer(help_text, parse_mode="HTML", reply_markup=get_admin_keyboard())
+            await message.answer(help_text, parse_mode="HTML", reply_markup=get_admin_panel_keyboard())
         else:
             await message.answer(help_text, parse_mode="HTML", reply_markup=get_user_menu_keyboard())
         return
@@ -93,7 +119,7 @@ async def start_command(message: types.Message, state: FSMContext):
         await message.answer(
             "👑 <b>Супер-админ</b>\n\n" + welcome_text,
             parse_mode="HTML",
-            reply_markup=get_admin_keyboard()
+            reply_markup=get_user_menu_keyboard_with_admin()
         )
     else:
         await message.answer(
@@ -124,7 +150,7 @@ async def cancel_command(message: types.Message, state: FSMContext):
         await message.answer(
             "👑 <b>Супер-админ</b>\n\n" + welcome_text,
             parse_mode="HTML",
-            reply_markup=get_admin_keyboard()
+            reply_markup=get_user_menu_keyboard_with_admin()
         )
     else:
         await message.answer(
@@ -226,6 +252,29 @@ async def help_button(message: types.Message, state: FSMContext):
     
     await message.answer(help_text, parse_mode="HTML")
 
+# ============ ОБРАБОТКА АДМИН-ПАНЕЛИ ============
+
+@router.message(lambda message: message.text == "👑 Админ-панель")
+async def admin_panel_button(message: types.Message, state: FSMContext):
+    """Кнопка Админ-панель"""
+    await state.clear()
+    user_id = message.from_user.id
+    
+    if user_id != SUPER_ADMIN_ID:
+        await message.answer("⛔ У вас нет доступа к админ-панели.")
+        return
+    
+    admin_text = (
+        "👑 <b>Панель администратора</b>\n\n"
+        "Выберите действие:"
+    )
+    
+    await message.answer(
+        admin_text,
+        parse_mode="HTML",
+        reply_markup=get_admin_panel_keyboard()
+    )
+
 # ============ ВОЗВРАТ В ГЛАВНОЕ МЕНЮ ============
 
 @router.message(lambda message: message.text == "🏠 Главное меню")
@@ -243,7 +292,7 @@ async def back_to_main_menu(message: types.Message, state: FSMContext):
         await message.answer(
             "👑 <b>Супер-админ</b>\n\n" + welcome_text,
             parse_mode="HTML",
-            reply_markup=get_admin_keyboard()
+            reply_markup=get_user_menu_keyboard_with_admin()
         )
     else:
         await message.answer(
