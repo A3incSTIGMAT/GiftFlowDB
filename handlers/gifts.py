@@ -1,14 +1,11 @@
 import logging
-from io import BytesIO
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
-
-import qrcode
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import get_all_gifts, create_order, get_gift_by_id
-from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER, SUPPORT_ADMIN_ID
+from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER, SUPPORT_ADMIN_ID, SUPER_ADMIN_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -84,51 +81,31 @@ async def gift_selected(callback: types.CallbackQuery):
             username=callback.from_user.username
         )
         
-        # Формируем данные для QR-кода
-        qr_text = f"Оплата подарка для Ланы: {gift['name']} {gift['price']}₽ Заказ #{order_id}"
+        # Формируем ссылку для оплаты через Ozon Bank (СБП)
+        user_id = callback.from_user.id
+        payment_link = f"https://finance.ozon.ru/apps/sbp/ozonbankpay/019d2edd-64d5-7781-87ea-fea6bf40d6cf?comment={user_id}"
         
-        # Генерируем QR-код
-        qr = qrcode.QRCode(box_size=8, border=2)
-        qr.add_data(qr_text)
-        qr.make(fit=True)
-        qr_image = qr.make_image(fill_color="black", back_color="white")
-        
-        # Сохраняем в BytesIO и конвертируем в BufferedInputFile
-        bio = BytesIO()
-        qr_image.save(bio, format='PNG')
-        bio.seek(0)
-        photo_bytes = bio.getvalue()
-        
-        # Текст для оплаты
+        # Текст для оплаты (как на скринах)
         payment_text = (
             f"🎁 <b>{gift['icon']} {gift['name']}</b>\n"
             f"💰 Сумма: <b>{gift['price']:,}₽</b>\n\n"
-            f"💳 <b>Реквизиты для оплаты:</b>\n"
-            f"🏦 {OZON_BANK_NAME}\n"
-            f"💳 Карта: ****{OZON_CARD_LAST}\n"
-            f"👤 Получатель: {OZON_RECEIVER}\n\n"
-            f"🆔 <b>Номер заказа: #{order_id}</b>\n\n"
-            f"📱 <b>Отсканируйте QR-код:</b>\n\n"
-            f"📲 <b>Как оплатить:</b>\n"
-            f"1. Отсканируйте QR-код или переведите по реквизитам\n"
-            f"2. Нажмите «Я оплатил(а)»\n"
-            f"3. Отправьте скриншот чека\n\n"
-            f"✅ После проверки чека я подтвержу подарок!"
+            f"💳 <b>Оплата по СБП</b>\n"
+            f"🏦 Банк: {OZON_BANK_NAME}\n\n"
+            f"📝 <b>Укажите в комментарии Telegram ID:</b> {user_id}\n\n"
+            f"📲 <b>После оплаты отправьте чек (скриншот)</b>\n\n"
+            f"⚠️ <i>Важно: Донаты являются добровольным пожертвованием и не возвращаются.</i>"
         )
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я оплатил(а)", callback_data=f"paid_{order_id}")],
+            [InlineKeyboardButton(text="💳 Оплатить по ссылке", url=payment_link)],
+            [InlineKeyboardButton(text="📸 Отправить чек об оплате", callback_data=f"paid_{order_id}")],
             [InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts_catalog")]
         ])
         
-        # Удаляем старое сообщение
+        # Удаляем старое сообщение и отправляем новое
         await callback.message.delete()
-        
-        # Отправляем фото с QR-кодом используя BufferedInputFile
-        photo_file = BufferedInputFile(photo_bytes, filename=f"qr_{order_id}.png")
-        await callback.message.answer_photo(
-            photo=photo_file,
-            caption=payment_text,
+        await callback.message.answer(
+            payment_text,
             parse_mode="HTML",
             reply_markup=keyboard
         )
@@ -138,25 +115,23 @@ async def gift_selected(callback: types.CallbackQuery):
         logger.error(f"Ошибка gift_selected: {e}")
         await callback.answer("Ошибка, попробуйте позже", show_alert=True)
 
-# ============ ОБРАБОТКА ОПЛАТЫ ============
+# ============ ОБРАБОТКА ОПЛАТЫ (отправка чека) ============
 
 @router.callback_query(lambda c: c.data and c.data.startswith("paid_"))
 async def payment_paid(callback: types.CallbackQuery, state: FSMContext):
-    """Пользователь нажал «Я оплатил»"""
+    """Пользователь нажал «Отправить чек об оплате»"""
     try:
         order_id = int(callback.data.split("_")[1])
         
         await state.update_data(order_id=order_id)
         await state.set_state(PaymentStates.waiting_for_receipt)
         
-        await callback.message.edit_caption(
-            caption=(
-                f"📸 <b>Отправьте скриншот чека</b>\n\n"
-                f"Заказ #{order_id}\n\n"
-                f"Отправьте фото чека одним сообщением.\n"
-                f"После проверки я подтвержу подарок.\n\n"
-                f"❌ Отмена - /cancel"
-            ),
+        await callback.message.edit_text(
+            f"📸 <b>Отправьте скриншот чека</b>\n\n"
+            f"Заказ #{order_id}\n\n"
+            f"Отправьте фото чека одним сообщением.\n"
+            f"После проверки я подтвержу подарок.\n\n"
+            f"❌ Отмена - /cancel",
             parse_mode="HTML"
         )
         await callback.message.edit_reply_markup(reply_markup=None)
