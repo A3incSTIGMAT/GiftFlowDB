@@ -1,173 +1,192 @@
-from aiogram import Router, types
-from aiogram.filters import Command
-from keyboards import get_gifts_keyboard, get_payment_keyboard, get_main_keyboard
-from database import get_all_gifts, get_top_heroes, add_transaction, update_top_heroes
 import logging
+from aiogram import Router, types
+from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-router = Router()
+from database import get_all_gifts, create_order, get_gift_by_id
+from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER
+
 logger = logging.getLogger(__name__)
+router = Router()
 
-@router.message(lambda message: message.text == "🎁 Каталог подарков")
-async def show_gifts(message: types.Message):
+# ============ КЛАВИАТУРА ДЛЯ КАТАЛОГА ============
+
+def get_gifts_keyboard(gifts):
+    """Клавиатура для каталога подарков"""
+    keyboard = []
+    row = []
+    for i, gift in enumerate(gifts, 1):
+        row.append(InlineKeyboardButton(
+            text=f"{gift['icon']} {gift['name']} - {gift['price']}₽",
+            callback_data=f"gift_{gift['id']}"
+        ))
+        if i % 2 == 0:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+# ============ ПОКАЗ КАТАЛОГА ============
+
+async def show_gifts_catalog(message: types.Message):
     """Показать каталог подарков"""
     gifts = await get_all_gifts()
     
     if not gifts:
-        await message.answer("📦 Каталог подарков временно пуст. Загляните позже!")
-        return
-    
-    text = "🎁 <b>Наши подарки для Ланы</b>\n\n"
-    for gift in gifts:
-        text += f"{gift['icon']} <b>{gift['name']}</b> — {gift['price']}₽\n"
-        if gift['description']:
-            text += f"   └ {gift['description']}\n"
-    
-    text += "\n👇 <i>Нажми на кнопку ниже, чтобы выбрать подарок</i>"
-    
-    keyboard = get_gifts_keyboard(gifts)
-    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-
-@router.message(lambda message: message.text == "🏆 Топ героев")
-async def show_top_heroes(message: types.Message):
-    """Показать топ героев (донатеров)"""
-    heroes = await get_top_heroes(limit=10)
-    
-    if not heroes:
         await message.answer(
-            "🏆 <b>Топ героев пока пуст</b>\n\n"
-            "💝 <i>Будь первым — подари подарок Лане и попади в топ!</i>\n\n"
-            "Нажми «🎁 Каталог подарков», чтобы выбрать подарок.",
+            "🎁 <b>Каталог подарков пока пуст</b>\n\n"
+            "Загляни позже!",
             parse_mode="HTML"
         )
         return
     
-    text = "🏆 <b>Топ героев канала</b>\n\n"
-    medals = ["🥇", "🥈", "🥉"]
+    text = "🎁 <b>Каталог подарков</b>\n\n"
+    for gift in gifts:
+        text += f"{gift['icon']} <b>{gift['name']}</b> — {gift['price']:,}₽\n"
+        if gift['description']:
+            text += f"   📝 {gift['description']}\n"
+        text += "\n"
     
-    for i, hero in enumerate(heroes[:10]):
-        if i < 3:
-            medal = medals[i]
-        else:
-            medal = "🎖️"
-        
-        username = hero.get('username') or f"user_{hero['user_id']}"
-        # Обрезаем длинные имена
-        if len(username) > 20:
-            username = username[:17] + "..."
-        
-        text += f"{medal} <b>{username}</b> — {hero['total_amount']:,}₽\n"
+    text += "👇 Нажми на подарок, чтобы оплатить:"
     
-    text += "\n💡 <i>Топ обновляется автоматически после каждого доната!</i>\n"
-    text += "🎁 <i>В конце месяца — секретный приз для лидеров!</i>"
-    
-    await message.answer(text, parse_mode="HTML")
-
-@router.message(lambda message: message.text == "🎁 О конкурсе")
-async def show_contest(message: types.Message):
-    """Показать информацию о конкурсе"""
-    text = (
-        "🎉 <b>КОНКУРС ДОНАТЕРОВ</b> 🎉\n\n"
-        "До 7 мая 2026 года собираем топ донатеров канала!\n\n"
-        "🏆 <b>Что получит победитель?</b>\n"
-        "🤫 <i>Секретный приз от Ланы!</i> (спойлер: это очень круто)\n\n"
-        "📊 <b>Как участвовать?</b>\n"
-        "1. Заходи в «🎁 Каталог подарков»\n"
-        "2. Выбирай любой подарок\n"
-        "3. Оплачивай через СБП или карту\n"
-        "4. Попадай в топ героев!\n\n"
-        "⏰ <b>Дедлайн:</b> 7 мая 2026\n\n"
-        "🔥 <i>Чем больше сумма донатов — тем выше шанс на победу!</i>\n\n"
-        "📢 <b>Победитель будет объявлен в канале @lanatwitchh</b>"
-    )
-    
-    await message.answer(text, parse_mode="HTML")
-
-@router.message(lambda message: message.text == "📺 Twitch")
-async def twitch_link(message: types.Message):
-    """Ссылка на Twitch"""
     await message.answer(
-        "🎮 <b>Twitch канал Ланы</b>\n\n"
-        "Подписывайся и не пропускай стримы:\n"
-        "👉 <a href='https://twitch.tv/lana'>twitch.tv/lana</a>",
+        text,
         parse_mode="HTML",
-        disable_web_page_preview=True
+        reply_markup=get_gifts_keyboard(gifts)
     )
 
-@router.message(lambda message: message.text == "📷 Instagram")
-async def instagram_link(message: types.Message):
-    """Ссылка на Instagram"""
-    await message.answer(
-        "📸 <b>Instagram Ланы</b>\n\n"
-        "Подписывайся на фото и сторис:\n"
-        "👉 <a href='https://instagram.com/lana'>instagram.com/lana</a>",
-        parse_mode="HTML",
-        disable_web_page_preview=True
-    )
+# ============ ОБРАБОТКА ВЫБОРА ПОДАРКА ============
 
-@router.message(lambda message: message.text == "🆘 Помощь")
-async def help_message(message: types.Message):
-    """Помощь"""
-    text = (
-        "🆘 <b>Помощь по боту</b>\n\n"
-        "📌 <b>Как подарить подарок?</b>\n"
-        "1. Нажми «🎁 Каталог подарков»\n"
-        "2. Выбери понравившийся подарок\n"
-        "3. Оплати через СБП или карту\n"
-        "4. После подтверждения оплаты ты попадёшь в топ героев!\n\n"
-        "🏆 <b>Топ героев</b>\n"
-        "Обновляется автоматически. Топ-3 получают особое упоминание в еженедельном посте.\n\n"
-        "🎁 <b>Конкурс</b>\n"
-        "До 7 мая — секретный приз для лучших донатеров месяца.\n\n"
-        "❓ <b>Вопросы и проблемы</b>\n"
-        "По всем вопросам пиши менеджеру: @lanatwitchh\n\n"
-        "💝 <i>Спасибо, что поддерживаешь Лану!</i>"
-    )
-    await message.answer(text, parse_mode="HTML")
-
-@router.callback_query(lambda c: c.data.startswith("gift_"))
-async def select_gift(callback: types.CallbackQuery):
-    """Выбор подарка"""
+@router.callback_query(lambda c: c.data and c.data.startswith("gift_"))
+async def gift_selected(callback: types.CallbackQuery):
+    """Обработка выбора подарка"""
     gift_id = int(callback.data.split("_")[1])
-    
-    gifts = await get_all_gifts()
-    gift = next((g for g in gifts if g['id'] == gift_id), None)
+    gift = await get_gift_by_id(gift_id)
     
     if not gift:
         await callback.answer("Подарок не найден!", show_alert=True)
         return
     
-    text = (
-        f"{gift['icon']} <b>{gift['name']}</b>\n\n"
-        f"💰 Цена: <b>{gift['price']}₽</b>\n"
-        f"📝 Описание: {gift['description'] or 'Нет описания'}\n\n"
-        f"👇 <i>Выбери способ оплаты:</i>"
+    # Создаём заказ
+    order_id = await create_order(
+        user_id=callback.from_user.id,
+        gift_id=gift_id,
+        amount=gift['price'],
+        username=callback.from_user.username
     )
     
-    keyboard = get_payment_keyboard(gift_id, gift['name'], gift['price'])
+    # Текст для оплаты
+    payment_text = (
+        f"🎁 <b>{gift['icon']} {gift['name']}</b>\n"
+        f"💰 Сумма: <b>{gift['price']:,}₽</b>\n\n"
+        f"💳 <b>Реквизиты для оплаты:</b>\n"
+        f"Банк: {OZON_BANK_NAME}\n"
+        f"Карта: ****{OZON_CARD_LAST}\n"
+        f"Получатель: {OZON_RECEIVER}\n\n"
+        f"📲 <b>Как оплатить:</b>\n"
+        f"1. Переведи сумму по номеру карты\n"
+        f"2. Нажми «Я оплатил(а)»\n"
+        f"3. Отправь скриншот чека\n\n"
+        f"🆔 Номер заказа: #{order_id}\n\n"
+        f"✅ После проверки чека я подтвержу подарок!"
+    )
     
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
-    await callback.answer()
-
-@router.callback_query(lambda c: c.data == "back_to_gifts")
-async def back_to_gifts(callback: types.CallbackQuery):
-    """Назад к каталогу подарков"""
-    gifts = await get_all_gifts()
-    keyboard = get_gifts_keyboard(gifts)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Я оплатил(а)", callback_data=f"paid_{order_id}")],
+        [InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts")]
+    ])
     
-    text = "🎁 <b>Выбери подарок для Ланы:</b>\n\n👇 <i>Нажми на кнопку ниже</i>"
-    
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
-    await callback.answer()
-
-@router.callback_query(lambda c: c.data == "back_to_main")
-async def back_to_main_from_gifts(callback: types.CallbackQuery):
-    """Назад в главное меню"""
-    keyboard = get_main_keyboard()
     await callback.message.delete()
     await callback.message.answer(
-        "🎁 <b>Главное меню</b>\n\n"
-        "Выберите действие:",
+        payment_text,
         parse_mode="HTML",
         reply_markup=keyboard
     )
+    await callback.answer()
+
+# ============ ОБРАБОТКА ОПЛАТЫ ============
+
+@router.callback_query(lambda c: c.data and c.data.startswith("paid_"))
+async def payment_paid(callback: types.CallbackQuery, state: FSMContext):
+    """Пользователь нажал «Я оплатил»"""
+    order_id = int(callback.data.split("_")[1])
+    
+    # Сохраняем order_id в состояние
+    await state.update_data(order_id=order_id)
+    await state.set_state("waiting_for_receipt")
+    
+    await callback.message.edit_text(
+        f"📸 <b>Отправь скриншот чека</b>\n\n"
+        f"Заказ #{order_id}\n\n"
+        f"Отправь фото чека одним сообщением.\n"
+        f"После проверки я подтвержу подарок.\n\n"
+        f"❌ Отмена - /cancel",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+# ============ ПОЛУЧЕНИЕ ЧЕКА ============
+
+@router.message(lambda message: message.photo, StateFilter("waiting_for_receipt"))
+async def receive_receipt(message: types.Message, state: FSMContext):
+    """Получение скриншота чека"""
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    
+    photo = message.photo[-1]
+    
+    # Отправляем админу на подтверждение
+    from config import SUPPORT_ADMIN_ID
+    
+    admin_text = (
+        f"🧾 <b>Новый чек на проверку!</b>\n\n"
+        f"🆔 Заказ: #{order_id}\n"
+        f"👤 Пользователь: @{message.from_user.username or message.from_user.first_name}\n"
+        f"🆔 ID: {message.from_user.id}\n\n"
+        f"✅ /approve {order_id} - подтвердить\n"
+        f"❌ /reject {order_id} - отклонить"
+    )
+    
+    await message.bot.send_photo(
+        SUPPORT_ADMIN_ID,
+        photo=photo.file_id,
+        caption=admin_text,
+        parse_mode="HTML"
+    )
+    
+    await message.answer(
+        "✅ <b>Чек отправлен на проверку!</b>\n\n"
+        "Я проверю и подтвержу подарок в ближайшее время.\n"
+        "Спасибо за поддержку! 💎",
+        parse_mode="HTML"
+    )
+    
+    await state.clear()
+
+@router.message(StateFilter("waiting_for_receipt"))
+async def invalid_receipt(message: types.Message):
+    """Если прислали не фото"""
+    await message.answer(
+        "❌ Пожалуйста, отправь <b>фото чека</b>.\n\n"
+        "Сделай скриншот перевода и отправь сюда.",
+        parse_mode="HTML"
+    )
+
+# ============ ВОЗВРАТ В КАТАЛОГ ============
+
+@router.callback_query(lambda c: c.data == "back_to_gifts")
+async def back_to_gifts(callback: types.CallbackQuery):
+    """Возврат в каталог подарков"""
+    await show_gifts_catalog(callback.message)
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "back_to_main")
+async def back_to_main(callback: types.CallbackQuery):
+    """Возврат в главное меню"""
+    from handlers.start import show_main_menu
+    await show_main_menu(callback.message)
     await callback.answer()
