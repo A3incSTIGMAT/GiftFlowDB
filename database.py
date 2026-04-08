@@ -292,7 +292,7 @@ async def get_pending_orders() -> List[Dict[str, Any]]:
     """Получить все заказы со статусом pending"""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
-            SELECT o.*, u.username, u.first_name
+            SELECT o.*, u.username as user_username, u.first_name
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.user_id
             WHERE o.status = 'pending'
@@ -309,8 +309,8 @@ async def get_pending_orders() -> List[Dict[str, Any]]:
                 "gift_name": row[3],
                 "amount": row[4],
                 "status": row[5],
-                "username": row[6] if len(row) > 6 else None,
-                "created_at": row[9] if len(row) > 9 else None,
+                "username": row[6],
+                "created_at": row[9],
             })
         return orders
 
@@ -353,16 +353,17 @@ async def get_user_orders(user_id: int) -> List[Dict[str, Any]]:
 
 # ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ ============
 
-async def add_transaction(user_id: int, gift_id: int, amount: int, payment_method: str = None) -> int:
+async def add_transaction(user_id: int, gift_id: int, amount: int, gift_name: str = None, payment_method: str = None) -> int:
     """Добавить новую транзакцию"""
     async with aiosqlite.connect(DB_PATH) as db:
-        gift = await get_gift_by_id(gift_id)
-        gift_name = gift['name'] if gift else f"Подарок #{gift_id}"
+        if not gift_name:
+            gift = await get_gift_by_id(gift_id)
+            gift_name = gift['name'] if gift else f"Подарок #{gift_id}"
         
         cursor = await db.execute("""
-            INSERT INTO transactions (user_id, gift_id, gift_name, amount, status, payment_method)
-            VALUES (?, ?, ?, ?, 'pending', ?)
-        """, (user_id, gift_id, gift_name, amount, payment_method))
+            INSERT INTO transactions (user_id, gift_id, gift_name, amount, status, payment_method, created_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?)
+        """, (user_id, gift_id, gift_name, amount, payment_method, datetime.now()))
         await db.commit()
         return cursor.lastrowid
 
@@ -403,6 +404,56 @@ async def get_pending_transactions(limit: int = 50) -> List[Dict[str, Any]]:
                 "username": row[11] if len(row) > 11 else None,
             })
         return transactions
+
+async def get_all_transactions(limit: int = 100) -> List[Dict[str, Any]]:
+    """Получить все транзакции (для админа)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT t.*, u.username, u.first_name
+            FROM transactions t
+            LEFT JOIN users u ON t.user_id = u.user_id
+            ORDER BY t.created_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cursor.fetchall()
+        
+        transactions = []
+        for row in rows:
+            transactions.append({
+                "id": row[0],
+                "user_id": row[1],
+                "gift_id": row[2],
+                "gift_name": row[3],
+                "amount": row[4],
+                "status": row[5],
+                "payment_method": row[6],
+                "payment_details": row[7],
+                "created_at": row[8],
+                "confirmed_at": row[9],
+                "confirmed_by": row[10],
+                "username": row[11] if len(row) > 11 else None,
+                "first_name": row[12] if len(row) > 12 else None,
+            })
+        return transactions
+
+async def get_transaction_by_id(transaction_id: int) -> Optional[Dict[str, Any]]:
+    """Получить транзакцию по ID"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,))
+        row = await cursor.fetchone()
+        
+        if row:
+            return {
+                "id": row[0],
+                "user_id": row[1],
+                "gift_id": row[2],
+                "gift_name": row[3],
+                "amount": row[4],
+                "status": row[5],
+                "payment_method": row[6],
+                "created_at": row[8],
+            }
+        return None
 
 # ============ ФУНКЦИИ ДЛЯ ТОПА ГЕРОЕВ ============
 
