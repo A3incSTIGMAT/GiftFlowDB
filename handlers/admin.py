@@ -15,12 +15,18 @@ router = Router()
 # ============ КЛАВИАТУРА ДЛЯ ПОСТА В КАНАЛЕ ============
 
 def get_channel_post_keyboard():
-    """Клавиатура для поста в канале (кнопки под постом)"""
+    """Клавиатура для поста в канале (только ссылки - ТОЛЬКО ТАК РАБОТАЕТ В КАНАЛЕ)"""
+    # ВСТАВЛЕНЫ ТВОИ РЕАЛЬНЫЕ ССЫЛКИ:
+    bot_username = "GiftFlowDB_bot"  # username твоего бота (без @)
+    twitch_url = "https://www.twitch.tv/lanatwitchh"
+    instagram_url = "https://www.instagram.com/lanawolfyy"
+    telegram_channel_url = "https://t.me/lanatwitchh"
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📺 Twitch", url="https://twitch.tv/")],
-        [InlineKeyboardButton(text="📷 Instagram", url="https://instagram.com/")],
-        [InlineKeyboardButton(text="🎁 Подарки", callback_data="gifts_menu")],
-        [InlineKeyboardButton(text="❓ Помощь", callback_data="help_menu")]
+        [InlineKeyboardButton(text="📺 Twitch", url=twitch_url)],
+        [InlineKeyboardButton(text="📷 Instagram", url=instagram_url)],
+        [InlineKeyboardButton(text="🎁 Подарки", url=f"https://t.me/{bot_username}?start=gifts")],
+        [InlineKeyboardButton(text="❓ Помощь", url=f"https://t.me/{bot_username}?start=help")]
     ])
     return keyboard
 
@@ -139,7 +145,7 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
                 post_photo,
                 caption=post_text,
                 parse_mode="HTML",
-                reply_markup=channel_keyboard  # ВОТ ЗДЕСЬ КНОПКИ
+                reply_markup=channel_keyboard
             )
         else:
             # Отправляем текст с КНОПКАМИ
@@ -147,19 +153,27 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
                 CHANNEL_ID,
                 post_text,
                 parse_mode="HTML",
-                reply_markup=channel_keyboard  # ВОТ ЗДЕСЬ КНОПКИ
+                reply_markup=channel_keyboard
             )
         
-        await callback.message.edit_text(
+        # Отправляем НОВОЕ сообщение об успехе
+        await callback.message.answer(
             "✅ <b>Пост успешно опубликован в канале с кнопками!</b>\n\n"
             "Кнопки: Twitch, Instagram, Подарки, Помощь",
             parse_mode="HTML"
         )
-        await callback.answer("Пост опубликован с кнопками!")
+        
+        # Удаляем сообщение с предпросмотром
+        try:
+            await callback.message.delete()
+        except:
+            pass
+        
+        await callback.answer("✅ Пост опубликован с кнопками!")
         
     except Exception as e:
         logger.error(f"Ошибка публикации поста: {e}")
-        await callback.message.edit_text(
+        await callback.message.answer(
             f"❌ <b>Ошибка публикации:</b>\n<code>{e}</code>",
             parse_mode="HTML"
         )
@@ -167,6 +181,7 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
     
     await state.clear()
     
+    # Показываем админ-панель
     await callback.bot.send_message(
         callback.from_user.id,
         "🛠️ <b>Админ-панель</b>\n\nВыберите действие:",
