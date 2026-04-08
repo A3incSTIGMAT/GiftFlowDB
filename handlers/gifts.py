@@ -3,7 +3,7 @@ from io import BytesIO
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 
 import qrcode
 
@@ -93,10 +93,11 @@ async def gift_selected(callback: types.CallbackQuery):
         qr.make(fit=True)
         qr_image = qr.make_image(fill_color="black", back_color="white")
         
-        # Сохраняем в BytesIO
+        # Сохраняем в BytesIO и конвертируем в BufferedInputFile
         bio = BytesIO()
         qr_image.save(bio, format='PNG')
         bio.seek(0)
+        photo_bytes = bio.getvalue()
         
         # Текст для оплаты
         payment_text = (
@@ -120,10 +121,13 @@ async def gift_selected(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts_catalog")]
         ])
         
-        # Удаляем старое сообщение и отправляем новое с QR-кодом
+        # Удаляем старое сообщение
         await callback.message.delete()
+        
+        # Отправляем фото с QR-кодом используя BufferedInputFile
+        photo_file = BufferedInputFile(photo_bytes, filename=f"qr_{order_id}.png")
         await callback.message.answer_photo(
-            photo=bio,
+            photo=photo_file,
             caption=payment_text,
             parse_mode="HTML",
             reply_markup=keyboard
