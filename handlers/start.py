@@ -3,8 +3,8 @@ from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-from database import register_user, get_user_language
-from keyboards import get_main_keyboard, get_admin_keyboard
+from database import register_user
+from keyboards import get_admin_keyboard
 from config import SUPER_ADMIN_ID
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ async def start_command(message: types.Message):
             "Топ-1 по сумме подарков получит секретный приз в конце периода.\n\n"
             "📌 <b>Конкурс</b>\n"
             "Дедлайн ~30 дней. Чем крупнее подарок — тем выше в топе.\n\n"
-            "❓ Вопросы? Пиши @mother_of_dragons"
+            "❓ Вопросы? Пиши @lanatwitchh"
         )
         
         if user_id == SUPER_ADMIN_ID:
@@ -173,7 +173,7 @@ async def twitch_button(message: types.Message):
         "📺 <b>Наш Twitch</b>\n\n"
         "Скоро вернусь со стримами на новом ПК!\n"
         "А пока подписывайся, чтобы не пропустить возвращение:\n\n"
-        "🔗 https://twitch.tv/mother_of_dragons",
+        "🔗 https://www.twitch.tv/lanatwitchh",
         parse_mode="HTML",
         disable_web_page_preview=True
     )
@@ -184,7 +184,7 @@ async def instagram_button(message: types.Message):
     await message.answer(
         "📷 <b>Наш Instagram</b>\n\n"
         "Там больше жизни, закулисья и эмоций:\n\n"
-        "🔗 https://instagram.com/mother_of_dragons",
+        "🔗 https://www.instagram.com/lanawolfyy",
         parse_mode="HTML",
         disable_web_page_preview=True
     )
@@ -259,7 +259,7 @@ async def help_button(message: types.Message):
         "Топ-1 по сумме подарков получит секретный приз в конце периода.\n\n"
         "📌 <b>Конкурс</b>\n"
         "Дедлайн ~30 дней. Чем крупнее подарок — тем выше в топе.\n\n"
-        "❓ Вопросы? Пиши @mother_of_dragons"
+        "❓ Вопросы? Пиши @lanatwitchh"
     )
     
     await message.answer(help_text, parse_mode="HTML")
