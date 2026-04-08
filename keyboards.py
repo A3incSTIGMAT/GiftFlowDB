@@ -3,14 +3,25 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 # ========== REPLY КЛАВИАТУРЫ ==========
 
 def get_main_keyboard():
-    """Клавиатура главного меню для пользователей"""
+    """Клавиатура главного меню для обычных пользователей"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
-            [KeyboardButton(text="🎁 Каталог подарков")],
-            [KeyboardButton(text="🏆 Топ героев"), KeyboardButton(text="🎁 О конкурсе")],
-            [KeyboardButton(text="🆘 Помощь"), KeyboardButton(text="👑 Админ-панель")],
-            [KeyboardButton(text="Главное меню")]
+            [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
+            [KeyboardButton(text="❓ О конкурсе"), KeyboardButton(text="🆘 Помощь")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
+def get_main_keyboard_with_admin():
+    """Клавиатура главного меню для админа (с кнопкой админки)"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
+            [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
+            [KeyboardButton(text="❓ О конкурсе"), KeyboardButton(text="🆘 Помощь")],
+            [KeyboardButton(text="👑 Админ-панель")]
         ],
         resize_keyboard=True
     )
@@ -24,7 +35,7 @@ def get_admin_keyboard():
             [KeyboardButton(text="🖼️ Управление галереей")],
             [KeyboardButton(text="✏️ Создать пост"), KeyboardButton(text="📊 Статистика")],
             [KeyboardButton(text="🏆 Топ героев (админ)"), KeyboardButton(text="➕ Добавить подарок")],
-            [KeyboardButton(text="🎁 Главное меню")]
+            [KeyboardButton(text="🏠 Главное меню")]
         ],
         resize_keyboard=True
     )
@@ -40,6 +51,15 @@ def get_cancel_keyboard():
     )
     return keyboard
 
+def get_back_to_main_keyboard():
+    """Клавиатура с кнопкой возврата в главное меню"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🏠 Главное меню")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
 
 # ========== INLINE КЛАВИАТУРЫ ==========
 
@@ -54,7 +74,7 @@ def get_gifts_keyboard(gifts):
             )
         ])
     keyboard.inline_keyboard.append([
-        InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")
+        InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main_menu")
     ])
     return keyboard
 
@@ -66,7 +86,7 @@ def get_payment_keyboard(gift_id, gift_name, gift_price):
             InlineKeyboardButton(text="📱 СБП/QR-код", callback_data=f"pay_sbp_{gift_id}")
         ],
         [
-            InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts")
+            InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts_catalog")
         ]
     ])
     return keyboard
@@ -76,7 +96,7 @@ def get_payment_details_keyboard(gift_id):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Я оплатил(а)", callback_data=f"confirm_payment_{gift_id}"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_gifts")
+            InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_gifts_catalog")
         ]
     ])
     return keyboard
