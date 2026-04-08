@@ -1,10 +1,12 @@
 import logging
 from aiogram import Router, types
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import get_all_gifts, create_order, get_gift_by_id
-from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER
+from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER, SUPPORT_ADMIN_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -110,6 +112,9 @@ async def gift_selected(callback: types.CallbackQuery):
 
 # ============ ОБРАБОТКА ОПЛАТЫ ============
 
+class PaymentStates(StatesGroup):
+    waiting_for_receipt = State()
+
 @router.callback_query(lambda c: c.data and c.data.startswith("paid_"))
 async def payment_paid(callback: types.CallbackQuery, state: FSMContext):
     """Пользователь нажал «Я оплатил»"""
@@ -117,7 +122,7 @@ async def payment_paid(callback: types.CallbackQuery, state: FSMContext):
     
     # Сохраняем order_id в состояние
     await state.update_data(order_id=order_id)
-    await state.set_state("waiting_for_receipt")
+    await state.set_state(PaymentStates.waiting_for_receipt)
     
     await callback.message.edit_text(
         f"📸 <b>Отправь скриншот чека</b>\n\n"
@@ -131,16 +136,13 @@ async def payment_paid(callback: types.CallbackQuery, state: FSMContext):
 
 # ============ ПОЛУЧЕНИЕ ЧЕКА ============
 
-@router.message(lambda message: message.photo, StateFilter("waiting_for_receipt"))
+@router.message(PaymentStates.waiting_for_receipt, lambda message: message.photo)
 async def receive_receipt(message: types.Message, state: FSMContext):
     """Получение скриншота чека"""
     data = await state.get_data()
     order_id = data.get('order_id')
     
     photo = message.photo[-1]
-    
-    # Отправляем админу на подтверждение
-    from config import SUPPORT_ADMIN_ID
     
     admin_text = (
         f"🧾 <b>Новый чек на проверку!</b>\n\n"
@@ -167,7 +169,7 @@ async def receive_receipt(message: types.Message, state: FSMContext):
     
     await state.clear()
 
-@router.message(StateFilter("waiting_for_receipt"))
+@router.message(PaymentStates.waiting_for_receipt)
 async def invalid_receipt(message: types.Message):
     """Если прислали не фото"""
     await message.answer(
