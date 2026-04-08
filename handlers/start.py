@@ -29,7 +29,7 @@ def get_user_menu_keyboard():
 
 @router.message(Command("start"))
 async def start_command(message: types.Message, state: FSMContext):
-    """Обработчик команды /start с принудительной очисткой состояния"""
+    """Обработчик команды /start с поддержкой deep links"""
     
     # Принудительно очищаем состояние
     await state.clear()
@@ -52,6 +52,7 @@ async def start_command(message: types.Message, state: FSMContext):
     
     # Обработка deep links из канала
     if deep_link == "gifts":
+        # Показываем каталог подарков
         from handlers.gifts import show_gifts_catalog
         await show_gifts_catalog(message)
         return
@@ -61,15 +62,13 @@ async def start_command(message: types.Message, state: FSMContext):
             "🆘 <b>Помощь</b>\n\n"
             "📌 <b>Как сделать подарок?</b>\n"
             "1. Выбери подарок в «Каталог подарков»\n"
-            "2. Нажми «Оплатить» — откроется ссылка на перевод\n"
+            "2. Нажми «Оплатить»\n"
             "3. Оплати по ссылке\n"
-            "4. Отправь скриншот чека в этот чат\n"
-            "5. Я подтвержу подарок и ты попадёшь в Топ героев\n\n"
+            "4. Отправь скриншот чека сюда\n"
+            "5. Я подтвержу подарок\n\n"
             "📌 <b>Что даёт подарок?</b>\n"
             "• Имя в Топе героев\n"
             "• Шанс на секретный приз\n\n"
-            "📌 <b>Секретный приз</b>\n"
-            "Топ-1 получит секретный приз.\n\n"
             "❓ Вопросы? Пиши @lanatwitchh"
         )
         
@@ -82,10 +81,10 @@ async def start_command(message: types.Message, state: FSMContext):
     # Обычный /start без параметров
     welcome_text = (
         "🐉 <b>Добро пожаловать!</b>\n\n"
-        "Это бот для подарков и поддержки.\n\n"
+        "Это бот для подарков.\n\n"
         "💎 <b>Что здесь есть:</b>\n"
         "• Подарки от 10₽ до 150 000₽\n"
-        "• Топ героев — кто поддержал больше всех\n"
+        "• Топ героев\n"
         "• Секретный приз для победителя\n\n"
         "👇 Выбери действие в меню:"
     )
