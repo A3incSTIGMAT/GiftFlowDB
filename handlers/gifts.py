@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import get_all_gifts, create_order, get_gift_by_id
-from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER, SUPPORT_ADMIN_ID, SUPER_ADMIN_ID
+from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER, SUPPORT_ADMIN_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -49,10 +49,8 @@ async def show_gifts_catalog(message: types.Message):
         )
         return
     
-    text = "🎁 <b>Каталог подарков</b>\n\n"
-    for gift in gifts:
-        text += f"• {gift['icon']} {gift['name']} — {gift['price']:,}₽\n"
-    text += "\n👇 Нажми на подарок, чтобы оплатить:"
+    # ТОЛЬКО кнопки, без текстового списка сверху
+    text = "🎁 <b>Выбери подарок для Ланы:</b>"
     
     await message.answer(
         text,
@@ -85,7 +83,7 @@ async def gift_selected(callback: types.CallbackQuery):
         user_id = callback.from_user.id
         payment_link = f"https://finance.ozon.ru/apps/sbp/ozonbankpay/019d2edd-64d5-7781-87ea-fea6bf40d6cf?comment={user_id}"
         
-        # Текст для оплаты (как на скринах)
+        # Текст для оплаты
         payment_text = (
             f"🎁 <b>{gift['icon']} {gift['name']}</b>\n"
             f"💰 Сумма: <b>{gift['price']:,}₽</b>\n\n"
