@@ -1,9 +1,13 @@
 import logging
+from io import BytesIO
 from aiogram import Router, types
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+
+import qrcode
+from PIL import Image
 
 from database import get_all_gifts, create_order, get_gift_by_id
 from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER, SUPPORT_ADMIN_ID
@@ -28,7 +32,7 @@ def get_gifts_keyboard(gifts):
     if row:
         keyboard.append(row)
     
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main_menu")])
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -81,6 +85,37 @@ async def gift_selected(callback: types.CallbackQuery):
         username=callback.from_user.username
     )
     
+    # Формируем данные для QR-кода
+    qr_text = (
+        f"Оплата подарка для Ланы\n"
+        f"Подарок: {gift['name']}\n"
+        f"Сумма: {gift['price']}₽\n"
+        f"Номер заказа: #{order_id}\n"
+        f"Банк: {OZON_BANK_NAME}\n"
+        f"Карта: ****{OZON_CARD_LAST}\n"
+        f"Получатель: {OZON_RECEIVER}"
+    )
+    
+    # Генерируем QR-код
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(qr_text)
+    qr.make(fit=True)
+    
+    qr_image = qr.make_image(fill_color="black", back_color="white")
+    
+    # Сохраняем в BytesIO
+    bio = BytesIO()
+    qr_image.save(bio, format='PNG')
+    bio.seek(0)
+    
+    # Отправляем QR-код как фото
+    await callback.message.delete()
+    
     # Текст для оплаты
     payment_text = (
         f"🎁 <b>{gift['icon']} {gift['name']}</b>\n"
@@ -89,6 +124,7 @@ async def gift_selected(callback: types.CallbackQuery):
         f"Банк: {OZON_BANK_NAME}\n"
         f"Карта: ****{OZON_CARD_LAST}\n"
         f"Получатель: {OZON_RECEIVER}\n\n"
+        f"📱 <b>ИЛИ отсканируйте QR-код ниже:</b>\n\n"
         f"📲 <b>Как оплатить:</b>\n"
         f"1. Переведи сумму по номеру карты\n"
         f"2. Нажми «Я оплатил(а)»\n"
@@ -99,12 +135,13 @@ async def gift_selected(callback: types.CallbackQuery):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Я оплатил(а)", callback_data=f"paid_{order_id}")],
-        [InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts")]
+        [InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts_catalog")]
     ])
     
-    await callback.message.delete()
-    await callback.message.answer(
-        payment_text,
+    # Отправляем QR-код и текст
+    await callback.message.answer_photo(
+        photo=FSInputFile(bio, filename=f"qr_order_{order_id}.png"),
+        caption=payment_text,
         parse_mode="HTML",
         reply_markup=keyboard
     )
@@ -124,12 +161,15 @@ async def payment_paid(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(order_id=order_id)
     await state.set_state(PaymentStates.waiting_for_receipt)
     
-    await callback.message.edit_text(
-        f"📸 <b>Отправь скриншот чека</b>\n\n"
-        f"Заказ #{order_id}\n\n"
-        f"Отправь фото чека одним сообщением.\n"
-        f"После проверки я подтвержу подарок.\n\n"
-        f"❌ Отмена - /cancel",
+    # Редактируем сообщение с QR-кодом (не удаляем, а меняем текст)
+    await callback.message.edit_caption(
+        caption=(
+            f"📸 <b>Отправь скриншот чека</b>\n\n"
+            f"Заказ #{order_id}\n\n"
+            f"Отправь фото чека одним сообщением.\n"
+            f"После проверки я подтвержу подарок.\n\n"
+            f"❌ Отмена - /cancel"
+        ),
         parse_mode="HTML"
     )
     await callback.answer()
@@ -142,17 +182,29 @@ async def receive_receipt(message: types.Message, state: FSMContext):
     data = await state.get_data()
     order_id = data.get('order_id')
     
+    if not order_id:
+        await message.answer(
+            "❌ Ошибка: заказ не найден.\n"
+            "Пожалуйста, начните оплату заново.",
+            parse_mode="HTML"
+        )
+        await state.clear()
+        return
+    
     photo = message.photo[-1]
     
     admin_text = (
         f"🧾 <b>Новый чек на проверку!</b>\n\n"
         f"🆔 Заказ: #{order_id}\n"
         f"👤 Пользователь: @{message.from_user.username or message.from_user.first_name}\n"
-        f"🆔 ID: {message.from_user.id}\n\n"
-        f"✅ /approve {order_id} - подтвердить\n"
-        f"❌ /reject {order_id} - отклонить"
+        f"🆔 ID: {message.from_user.id}\n"
+        f"🆔 Username: {message.from_user.username}\n"
+        f"📅 Дата: {message.date}\n\n"
+        f"✅ /approve_{order_id} - подтвердить\n"
+        f"❌ /reject_{order_id} - отклонить"
     )
     
+    # Отправляем админу
     await message.bot.send_photo(
         SUPPORT_ADMIN_ID,
         photo=photo.file_id,
@@ -160,6 +212,7 @@ async def receive_receipt(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
     
+    # Подтверждение пользователю
     await message.answer(
         "✅ <b>Чек отправлен на проверку!</b>\n\n"
         "Я проверю и подтвержу подарок в ближайшее время.\n"
@@ -174,21 +227,25 @@ async def invalid_receipt(message: types.Message):
     """Если прислали не фото"""
     await message.answer(
         "❌ Пожалуйста, отправь <b>фото чека</b>.\n\n"
-        "Сделай скриншот перевода и отправь сюда.",
+        "Сделай скриншот перевода и отправь сюда.\n\n"
+        "❌ Отмена - /cancel",
         parse_mode="HTML"
     )
 
 # ============ ВОЗВРАТ В КАТАЛОГ ============
 
-@router.callback_query(lambda c: c.data == "back_to_gifts")
-async def back_to_gifts(callback: types.CallbackQuery):
+@router.callback_query(lambda c: c.data == "back_to_gifts_catalog")
+async def back_to_gifts_catalog(callback: types.CallbackQuery):
     """Возврат в каталог подарков"""
     await show_gifts_catalog(callback.message)
     await callback.answer()
 
-@router.callback_query(lambda c: c.data == "back_to_main")
-async def back_to_main(callback: types.CallbackQuery):
-    """Возврат в главное меню"""
+@router.callback_query(lambda c: c.data == "back_to_main_menu")
+async def back_to_main_menu(callback: types.CallbackQuery):
+    """Возврат в главное меню - ИСПРАВЛЕНО"""
     from handlers.start import show_main_menu
+    # Удаляем текущее сообщение с каталогом
+    await callback.message.delete()
+    # Показываем главное меню новым сообщением
     await show_main_menu(callback.message)
     await callback.answer()
