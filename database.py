@@ -48,6 +48,23 @@ async def init_db():
         """)
         
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                gift_id INTEGER NOT NULL,
+                gift_name TEXT,
+                amount INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
+                username TEXT,
+                payment_method TEXT,
+                payment_details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                confirmed_at TIMESTAMP,
+                confirmed_by INTEGER
+            )
+        """)
+        
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -103,6 +120,8 @@ async def init_db():
             )
         """)
         
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_top_heroes_amount ON top_heroes(total_amount DESC)")
@@ -119,22 +138,17 @@ async def init_default_gifts():
         
         if count[0] == 0:
             default_gifts = [
-                # Дешёвые подарки (10-500₽)
                 ("🍬 Конфетка", "Маленькая сладость для Ланы", 10, "🍬"),
                 ("🍫 Шоколадка", "Вкусный шоколад для поднятия настроения", 50, "🍫"),
                 ("☕ Кофе", "Чашечка ароматного кофе", 100, "☕"),
                 ("🐱 Корм Марсику", "Вкусняшка для любимого кота Ланы", 150, "🐱"),
                 ("🍕 Пицца", "Лана закажет пиццу на стриме", 300, "🍕"),
                 ("🎂 Тортик", "Сладкий подарок ко дню рождения", 500, "🎂"),
-                
-                # Средние подарки (1000-10000₽)
                 ("🎮 Игра в Steam", "Лана купит игру по твоему желанию", 1000, "🎮"),
                 ("📚 Книга", "Интересная книга для чтения", 1500, "📚"),
                 ("🎫 Билет в кино", "Лана сходит в кино", 2000, "🎫"),
                 ("💄 Косметика", "Красивый подарок для красоты", 5000, "💄"),
                 ("👕 Футболка", "Брендовая футболка с принтом", 7500, "👕"),
-                
-                # Дорогие подарки (15000-150000₽)
                 ("🎧 Наушники", "Качественные беспроводные наушники", 15000, "🎧"),
                 ("⌚ Умные часы", "Стильные смарт-часы", 30000, "⌚"),
                 ("📱 Новый телефон", "Современный смартфон", 75000, "📱"),
@@ -236,10 +250,111 @@ async def update_gift(gift_id: int, **kwargs):
             await db.execute(query, values)
             await db.commit()
 
+# ============ ФУНКЦИИ ДЛЯ ЗАКАЗОВ ============
+
+async def create_order(user_id: int, gift_id: int, amount: int, username: str = None) -> int:
+    """Создать новый заказ"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        gift = await get_gift_by_id(gift_id)
+        gift_name = gift['name'] if gift else f"Подарок #{gift_id}"
+        
+        cursor = await db.execute("""
+            INSERT INTO orders (user_id, gift_id, gift_name, amount, status, username, created_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?)
+        """, (user_id, gift_id, gift_name, amount, username, datetime.now()))
+        await db.commit()
+        return cursor.lastrowid
+
+async def get_order(order_id: int) -> Optional[Dict[str, Any]]:
+    """Получить заказ по ID"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+        row = await cursor.fetchone()
+        
+        if row:
+            return {
+                "id": row[0],
+                "user_id": row[1],
+                "gift_id": row[2],
+                "gift_name": row[3],
+                "amount": row[4],
+                "status": row[5],
+                "username": row[6],
+                "payment_method": row[7],
+                "payment_details": row[8],
+                "created_at": row[9],
+                "confirmed_at": row[10],
+                "confirmed_by": row[11]
+            }
+        return None
+
+async def get_pending_orders() -> List[Dict[str, Any]]:
+    """Получить все заказы со статусом pending"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT o.*, u.username, u.first_name
+            FROM orders o
+            LEFT JOIN users u ON o.user_id = u.user_id
+            WHERE o.status = 'pending'
+            ORDER BY o.created_at DESC
+        """)
+        rows = await cursor.fetchall()
+        
+        orders = []
+        for row in rows:
+            orders.append({
+                "id": row[0],
+                "user_id": row[1],
+                "gift_id": row[2],
+                "gift_name": row[3],
+                "amount": row[4],
+                "status": row[5],
+                "username": row[6] if len(row) > 6 else None,
+                "created_at": row[9] if len(row) > 9 else None,
+            })
+        return orders
+
+async def confirm_order(order_id: int):
+    """Подтвердить заказ"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE orders 
+            SET status = 'confirmed', confirmed_at = ?
+            WHERE id = ?
+        """, (datetime.now(), order_id))
+        await db.commit()
+
+async def reject_order(order_id: int):
+    """Отклонить заказ"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE orders SET status = 'rejected' WHERE id = ?
+        """, (order_id,))
+        await db.commit()
+
+async def get_user_orders(user_id: int) -> List[Dict[str, Any]]:
+    """Получить все заказы пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC
+        """, (user_id,))
+        rows = await cursor.fetchall()
+        
+        return [
+            {
+                "id": row[0],
+                "gift_name": row[3],
+                "amount": row[4],
+                "status": row[5],
+                "created_at": row[9]
+            }
+            for row in rows
+        ]
+
 # ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ ============
 
 async def add_transaction(user_id: int, gift_id: int, amount: int, payment_method: str = None) -> int:
-    """Добавить новую транзакцию (заказ)"""
+    """Добавить новую транзакцию"""
     async with aiosqlite.connect(DB_PATH) as db:
         gift = await get_gift_by_id(gift_id)
         gift_name = gift['name'] if gift else f"Подарок #{gift_id}"
@@ -248,16 +363,6 @@ async def add_transaction(user_id: int, gift_id: int, amount: int, payment_metho
             INSERT INTO transactions (user_id, gift_id, gift_name, amount, status, payment_method)
             VALUES (?, ?, ?, ?, 'pending', ?)
         """, (user_id, gift_id, gift_name, amount, payment_method))
-        await db.commit()
-        return cursor.lastrowid
-
-async def create_transaction(user_id: int, gift_id: int, amount: int, gift_name: str) -> int:
-    """Создать новую транзакцию (альтернативная функция)"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
-            INSERT INTO transactions (user_id, gift_id, gift_name, amount, status)
-            VALUES (?, ?, ?, ?, 'pending')
-        """, (user_id, gift_id, gift_name, amount))
         await db.commit()
         return cursor.lastrowid
 
@@ -294,40 +399,10 @@ async def get_pending_transactions(limit: int = 50) -> List[Dict[str, Any]]:
                 "amount": row[4],
                 "status": row[5],
                 "payment_method": row[6],
-                "payment_details": row[7],
                 "created_at": row[8],
-                "confirmed_at": row[9],
-                "confirmed_by": row[10],
                 "username": row[11] if len(row) > 11 else None,
-                "first_name": row[12] if len(row) > 12 else None,
             })
         return transactions
-
-async def get_all_transactions(limit: int = 100) -> List[Dict[str, Any]]:
-    """Получить все транзакции"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
-            SELECT t.*, u.username
-            FROM transactions t
-            LEFT JOIN users u ON t.user_id = u.user_id
-            ORDER BY t.created_at DESC
-            LIMIT ?
-        """, (limit,))
-        rows = await cursor.fetchall()
-        
-        return [
-            {
-                "id": row[0],
-                "user_id": row[1],
-                "gift_id": row[2],
-                "gift_name": row[3],
-                "amount": row[4],
-                "status": row[5],
-                "created_at": row[8],
-                "username": row[11] if len(row) > 11 else None,
-            }
-            for row in rows
-        ]
 
 # ============ ФУНКЦИИ ДЛЯ ТОПА ГЕРОЕВ ============
 
@@ -351,22 +426,6 @@ async def update_top_heroes(user_id: int, amount: int, username: str = None):
             """, (user_id, username, amount, datetime.now()))
         
         await db.commit()
-        
-        cursor = await db.execute("""
-            SELECT user_id, total_amount FROM top_heroes 
-            ORDER BY total_amount DESC 
-            LIMIT 3
-        """)
-        top3 = await cursor.fetchall()
-        
-        for i, (uid, _) in enumerate(top3):
-            if uid == user_id:
-                return i + 1
-        return None
-
-async def update_top_hero(user_id: int, amount: int, username: str = None):
-    """Обновить топ героев (алиас для update_top_heroes)"""
-    return await update_top_heroes(user_id, amount, username)
 
 async def get_top_heroes(limit: int = 10) -> List[Dict[str, Any]]:
     """Получить топ героев"""
@@ -445,7 +504,7 @@ async def is_super_admin(user_id: int) -> bool:
     return user_id == SUPER_ADMIN_ID
 
 async def is_admin(user_id: int) -> bool:
-    """Проверка, является ли пользователь админом или менеджером"""
+    """Проверка, является ли пользователь админом"""
     if user_id == SUPER_ADMIN_ID:
         return True
     if user_id == SUPPORT_ADMIN_ID:
@@ -455,14 +514,14 @@ async def is_admin(user_id: int) -> bool:
         row = await cursor.fetchone()
         return row is not None
 
-async def add_admin(user_id: int, username: str = None) -> bool:
-    """Добавить администратора (только для супер-админа)"""
+async def add_admin(user_id: int, username: str = None, added_by: int = None) -> bool:
+    """Добавить администратора"""
     async with aiosqlite.connect(DB_PATH) as db:
         try:
             await db.execute("""
                 INSERT OR REPLACE INTO admins (user_id, username, added_by)
                 VALUES (?, ?, ?)
-            """, (user_id, username, SUPER_ADMIN_ID))
+            """, (user_id, username, added_by or SUPER_ADMIN_ID))
             await db.commit()
             return True
         except Exception as e:
@@ -506,20 +565,20 @@ async def update_stats_cache():
         cursor = await db.execute("SELECT COUNT(*) FROM users")
         total_users = (await cursor.fetchone())[0]
         
-        cursor = await db.execute("SELECT COUNT(*) FROM transactions WHERE status = 'paid'")
+        cursor = await db.execute("SELECT COUNT(*) FROM orders WHERE status = 'confirmed'")
         total_donations = (await cursor.fetchone())[0]
         
-        cursor = await db.execute("SELECT SUM(amount) FROM transactions WHERE status = 'paid'")
+        cursor = await db.execute("SELECT SUM(amount) FROM orders WHERE status = 'confirmed'")
         total_amount = (await cursor.fetchone())[0] or 0
         
         first_day = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         cursor = await db.execute("""
-            SELECT SUM(amount) FROM transactions 
-            WHERE status = 'paid' AND created_at >= ?
+            SELECT SUM(amount) FROM orders 
+            WHERE status = 'confirmed' AND created_at >= ?
         """, (first_day,))
         month_amount = (await cursor.fetchone())[0] or 0
         
-        pending = await get_pending_transactions(limit=1)
+        pending = await get_pending_orders()
         pending_count = len(pending)
         
         _cache_stats = {
@@ -540,6 +599,21 @@ async def get_stats() -> Dict[str, Any]:
     if not _cache_stats:
         await update_stats_cache()
     return _cache_stats
+
+async def get_total_users() -> int:
+    """Получить общее количество пользователей"""
+    stats = await get_stats()
+    return stats.get("total_users", 0)
+
+async def get_total_donations() -> int:
+    """Получить общую сумму донатов"""
+    stats = await get_stats()
+    return stats.get("total_amount", 0)
+
+async def get_donations_count() -> int:
+    """Получить количество донатов"""
+    stats = await get_stats()
+    return stats.get("total_donations", 0)
 
 # ============ ФУНКЦИИ ДЛЯ ЛОГОВ ============
 
