@@ -5,19 +5,29 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
-from database import is_admin, is_super_admin, add_gallery_photo, get_gallery_photos, delete_gallery_photo, add_gift, get_all_gifts, update_gift
+from database import (
+    get_pending_orders, confirm_order, reject_order, get_order,
+    add_gallery_photo, get_gallery_photos, delete_gallery_photo,
+    add_gift, get_all_gifts, update_gift, delete_gift,
+    get_statistics, get_top_heroes
+)
 from keyboards import get_admin_keyboard, get_main_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_back_to_admin_keyboard
 from config import SUPER_ADMIN_ID, CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
 
+# ============ ПРОВЕРКА ПРАВ ============
+
+def is_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь админом"""
+    return user_id == SUPER_ADMIN_ID
+
 # ============ КЛАВИАТУРА ДЛЯ ПОСТА В КАНАЛЕ ============
 
 def get_channel_post_keyboard():
     """Клавиатура для поста в канале (только ссылки - ТОЛЬКО ТАК РАБОТАЕТ В КАНАЛЕ)"""
-    # ВСТАВЛЕНЫ ТВОИ РЕАЛЬНЫЕ ССЫЛКИ:
-    bot_username = "GiftFlowDB_bot"  # username твоего бота (без @)
+    bot_username = "GiftFlowDB_bot"
     twitch_url = "https://www.twitch.tv/lanatwitchh"
     instagram_url = "https://www.instagram.com/lanawolfyy"
     telegram_channel_url = "https://t.me/lanatwitchh"
@@ -30,6 +40,152 @@ def get_channel_post_keyboard():
     ])
     return keyboard
 
+# ============ АДМИН-ПАНЕЛЬ ============
+
+@router.message(lambda message: message.text == "👑 Админ-панель")
+async def admin_panel(message: types.Message, state: FSMContext):
+    """Вход в админ-панель"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа к админ-панели.")
+        return
+    
+    await state.clear()
+    await message.answer(
+        "👑 <b>Панель администратора</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
+
+# ============ УПРАВЛЕНИЕ ЗАКАЗАМИ ============
+
+@router.message(lambda message: message.text == "📦 Управление заказами")
+async def manage_orders(message: types.Message):
+    """Показать список ожидающих заказов"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    orders = get_pending_orders()
+    
+    if not orders:
+        await message.answer("📭 Нет ожидающих заказов.")
+        return
+    
+    for order in orders:
+        text = (
+            f"🆔 <b>Заказ #{order['id']}</b>\n"
+            f"🎁 Подарок: {order['gift_name']}\n"
+            f"💰 Сумма: {order['amount']}₽\n"
+            f"👤 Пользователь: @{order.get('username', 'нет username')}\n"
+            f"🆔 ID: {order['user_id']}\n"
+        )
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"approve_{order['id']}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{order['id']}")
+            ]
+        ])
+        
+        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+# ============ ПОДТВЕРЖДЕНИЕ/ОТКЛОНЕНИЕ (CALLBACK) ============
+
+@router.callback_query(lambda c: c.data and c.data.startswith("approve_"))
+async def approve_order_callback(callback: types.CallbackQuery):
+    """Подтверждение заказа по кнопке"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    
+    order_id = int(callback.data.split("_")[1])
+    success = confirm_order(order_id)
+    
+    if success:
+        order = get_order(order_id)
+        if order:
+            user_id = order['user_id']
+            gift_name = order['gift_name']
+            amount = order['amount']
+            
+            await callback.bot.send_message(
+                user_id,
+                f"✅ <b>Подарок подтверждён!</b>\n\n"
+                f"🎁 {gift_name}\n"
+                f"💰 {amount}₽\n\n"
+                f"Спасибо за поддержку! ❤️",
+                parse_mode="HTML"
+            )
+            
+            await callback.message.edit_caption(
+                caption=f"✅ ЗАКАЗ #{order_id} ПОДТВЕРЖДЁН\nПользователь уведомлён.",
+                reply_markup=None
+            )
+            await callback.answer("Подтверждено!")
+        else:
+            await callback.answer("Заказ не найден", show_alert=True)
+    else:
+        await callback.answer("Ошибка подтверждения", show_alert=True)
+
+@router.callback_query(lambda c: c.data and c.data.startswith("reject_"))
+async def reject_order_callback(callback: types.CallbackQuery):
+    """Отклонение заказа по кнопке"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    
+    order_id = int(callback.data.split("_")[1])
+    success = reject_order(order_id)
+    
+    if success:
+        order = get_order(order_id)
+        if order:
+            user_id = order['user_id']
+            gift_name = order['gift_name']
+            
+            await callback.bot.send_message(
+                user_id,
+                f"❌ <b>Подарок не подтверждён</b>\n\n"
+                f"🎁 {gift_name}\n\n"
+                f"Проблема с чеком. Отправьте чёткий скриншот.\nВопросы: @lanatwitchh",
+                parse_mode="HTML"
+            )
+            
+            await callback.message.edit_caption(
+                caption=f"❌ ЗАКАЗ #{order_id} ОТКЛОНЁН\nПользователь уведомлён.",
+                reply_markup=None
+            )
+            await callback.answer("Отклонено!")
+        else:
+            await callback.answer("Заказ не найден", show_alert=True)
+    else:
+        await callback.answer("Ошибка отклонения", show_alert=True)
+
+# ============ СТАТИСТИКА ============
+
+@router.message(lambda message: message.text == "📊 Статистика")
+async def show_statistics(message: types.Message):
+    """Показать статистику"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    stats = get_statistics()
+    heroes = get_top_heroes(limit=3)
+    
+    top_text = ""
+    for i, hero in enumerate(heroes, 1):
+        top_text += f"{i}. @{hero.get('username', 'anon')} — {hero['total_amount']}₽\n"
+    
+    text = (
+        f"📊 <b>СТАТИСТИКА</b>\n\n"
+        f"💰 Всего собрано: {stats['total_amount']:,}₽\n"
+        f"🎁 Всего подарков: {stats['total_orders']}\n"
+        f"👥 Участников: {stats['total_users']}\n"
+        f"⏳ Ожидает проверки: {stats['total_pending']}\n\n"
+        f"🏆 <b>Топ-3 героев:</b>\n{top_text}"
+    )
+    
+    await message.answer(text, parse_mode="HTML")
+
 # ============ СОЗДАНИЕ ПОСТА (FSM) ============
 
 class PostStates(StatesGroup):
@@ -40,8 +196,8 @@ class PostStates(StatesGroup):
 @router.message(lambda message: message.text == "✏️ Создать пост")
 async def create_post(message: types.Message, state: FSMContext):
     """Начало создания поста"""
-    if not await is_super_admin(message.from_user.id):
-        await message.answer("❌ Только для супер-админа.")
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Только для админа.")
         return
     
     await state.set_state(PostStates.waiting_for_post_text)
@@ -134,12 +290,10 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
     post_text = data.get('post_text', '')
     post_photo = data.get('post_photo')
     
-    # Получаем клавиатуру с кнопками для канала
     channel_keyboard = get_channel_post_keyboard()
     
     try:
         if post_photo:
-            # Отправляем фото с подписью и КНОПКАМИ
             await callback.bot.send_photo(
                 CHANNEL_ID,
                 post_photo,
@@ -148,7 +302,6 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
                 reply_markup=channel_keyboard
             )
         else:
-            # Отправляем текст с КНОПКАМИ
             await callback.bot.send_message(
                 CHANNEL_ID,
                 post_text,
@@ -156,14 +309,12 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
                 reply_markup=channel_keyboard
             )
         
-        # Отправляем НОВОЕ сообщение об успехе
         await callback.message.answer(
             "✅ <b>Пост успешно опубликован в канале с кнопками!</b>\n\n"
             "Кнопки: Twitch, Instagram, Подарки, Помощь",
             parse_mode="HTML"
         )
         
-        # Удаляем сообщение с предпросмотром
         try:
             await callback.message.delete()
         except:
@@ -181,7 +332,6 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
     
     await state.clear()
     
-    # Показываем админ-панель
     await callback.bot.send_message(
         callback.from_user.id,
         "🛠️ <b>Админ-панель</b>\n\nВыберите действие:",
@@ -232,26 +382,30 @@ async def cancel_post(callback: types.CallbackQuery, state: FSMContext):
 
 # ============ УПРАВЛЕНИЕ ГАЛЕРЕЕЙ ============
 
+class GalleryStates(StatesGroup):
+    waiting_for_photo = State()
+    waiting_for_description = State()
+
 @router.message(lambda message: message.text == "🖼️ Управление галереей")
 async def manage_gallery(message: types.Message):
     """Управление галереей"""
-    if not await is_admin(message.from_user.id):
+    if not is_admin(message.from_user.id):
         await message.answer("❌ Нет доступа.")
         return
     
-    images = await get_gallery_photos(limit=20)
+    images = get_gallery_photos(limit=20)
     
     if not images:
         await message.answer(
             "🖼️ <b>Галерея пуста</b>\n\n"
-            "Добавьте фото командой /add_photo",
+            "Добавьте фото кнопкой ниже.",
             parse_mode="HTML"
         )
-        return
-    
-    text = "🖼️ <b>Галерея</b>\n\n"
-    for img in images[:10]:
-        text += f"📷 ID: {img['id']} | {img['description'][:30] if img['description'] else 'Без описания'}\n"
+    else:
+        text = "🖼️ <b>Галерея</b>\n\n"
+        for img in images[:10]:
+            text += f"📷 ID: {img['id']} | {img['description'][:30] if img['description'] else 'Без описания'}\n"
+        await message.answer(text, parse_mode="HTML")
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить фото", callback_data="add_gallery_photo")],
@@ -259,16 +413,16 @@ async def manage_gallery(message: types.Message):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
     ])
     
-    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    await message.answer("Выберите действие:", reply_markup=keyboard)
 
 @router.callback_query(lambda c: c.data == "add_gallery_photo")
 async def add_gallery_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
     """Запрос на добавление фото в галерею"""
-    if not await is_admin(callback.from_user.id):
+    if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа!", show_alert=True)
         return
     
-    await state.set_state("waiting_for_gallery_photo")
+    await state.set_state(GalleryStates.waiting_for_photo)
     await callback.message.edit_text(
         "📸 <b>Добавление фото в галерею</b>\n\n"
         "Отправьте фото.\n"
@@ -278,55 +432,59 @@ async def add_gallery_photo_prompt(callback: types.CallbackQuery, state: FSMCont
     )
     await callback.answer()
 
-@router.message(StateFilter("waiting_for_gallery_photo"), lambda message: message.photo)
+@router.message(GalleryStates.waiting_for_photo, lambda message: message.photo)
 async def save_gallery_photo(message: types.Message, state: FSMContext):
     """Сохранение фото в галерею"""
     photo = message.photo[-1]
-    await state.update_data(gallery_photo_id=photo.file_id)
-    await state.set_state("waiting_for_gallery_description")
+    await state.update_data(photo_id=photo.file_id)
+    await state.set_state(GalleryStates.waiting_for_description)
     await message.answer(
         "📝 <b>Добавьте описание к фото</b>\n\n"
-        "Отправьте текст или нажмите «Пропустить».\n\n"
-        "⏭️ Пропустить - /skip",
+        "Отправьте текст или нажмите «Пропустить» - /skip",
         parse_mode="HTML"
     )
 
-@router.message(StateFilter("waiting_for_gallery_description"), lambda message: message.text == "/skip")
+@router.message(GalleryStates.waiting_for_photo)
+async def invalid_gallery_photo(message: types.Message):
+    """Если прислали не фото"""
+    await message.answer("❌ Пожалуйста, отправьте фото.")
+
+@router.message(GalleryStates.waiting_for_description, lambda message: message.text == "/skip")
 async def skip_gallery_description(message: types.Message, state: FSMContext):
     """Пропуск описания"""
     data = await state.get_data()
-    photo_id = data.get('gallery_photo_id')
+    photo_id = data.get('photo_id')
     
-    await add_gallery_photo(photo_id, "", message.from_user.id)
+    success = add_gallery_photo(photo_id, "")
     
     await state.clear()
-    await message.answer(
-        "✅ <b>Фото добавлено в галерею!</b>\n\n"
-        "Описание: нет",
-        parse_mode="HTML",
-        reply_markup=get_admin_keyboard()
-    )
+    if success:
+        await message.answer("✅ <b>Фото добавлено в галерею!</b>", reply_markup=get_admin_keyboard())
+    else:
+        await message.answer("❌ Ошибка при добавлении фото.", reply_markup=get_admin_keyboard())
 
-@router.message(StateFilter("waiting_for_gallery_description"))
+@router.message(GalleryStates.waiting_for_description)
 async def save_gallery_description(message: types.Message, state: FSMContext):
     """Сохранение описания"""
     data = await state.get_data()
-    photo_id = data.get('gallery_photo_id')
+    photo_id = data.get('photo_id')
     
-    await add_gallery_photo(photo_id, message.text, message.from_user.id)
+    success = add_gallery_photo(photo_id, message.text)
     
     await state.clear()
-    await message.answer(
-        f"✅ <b>Фото добавлено в галерею!</b>\n\n"
-        f"Описание: {message.text}",
-        parse_mode="HTML",
-        reply_markup=get_admin_keyboard()
-    )
+    if success:
+        await message.answer(
+            f"✅ <b>Фото добавлено в галерею!</b>\n\nОписание: {message.text}",
+            parse_mode="HTML",
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await message.answer("❌ Ошибка при добавлении фото.", reply_markup=get_admin_keyboard())
 
 @router.callback_query(lambda c: c.data == "delete_gallery_photo")
 async def delete_gallery_photo_prompt(callback: types.CallbackQuery):
     """Запрос ID фото для удаления"""
-    if not await is_admin(callback.from_user.id):
+    if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа!", show_alert=True)
         return
     
@@ -342,12 +500,12 @@ async def delete_gallery_photo_prompt(callback: types.CallbackQuery):
 @router.message(lambda message: message.text and message.text.isdigit())
 async def delete_gallery_photo_by_id(message: types.Message):
     """Удаление фото по ID"""
-    if not await is_admin(message.from_user.id):
+    if not is_admin(message.from_user.id):
         await message.answer("❌ Нет доступа.")
         return
     
     photo_id = int(message.text)
-    success = await delete_gallery_photo(photo_id)
+    success = delete_gallery_photo(photo_id)
     
     if success:
         await message.answer(f"✅ Фото #{photo_id} удалено из галереи.", reply_markup=get_admin_keyboard())
@@ -365,8 +523,8 @@ class GiftStates(StatesGroup):
 @router.message(lambda message: message.text == "➕ Добавить подарок")
 async def add_gift_start(message: types.Message, state: FSMContext):
     """Начало добавления подарка"""
-    if not await is_super_admin(message.from_user.id):
-        await message.answer("❌ Только для супер-админа.")
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Только для админа.")
         return
     
     await state.set_state(GiftStates.waiting_for_gift_name)
@@ -447,7 +605,7 @@ async def skip_gift_icon(message: types.Message, state: FSMContext):
     await state.update_data(gift_icon="🎁")
     data = await state.get_data()
     
-    gift_id = await add_gift(
+    success = add_gift(
         name=data['gift_name'],
         price=data['gift_price'],
         description=data.get('gift_description', ''),
@@ -455,15 +613,17 @@ async def skip_gift_icon(message: types.Message, state: FSMContext):
     )
     
     await state.clear()
-    await message.answer(
-        f"✅ <b>Подарок добавлен!</b>\n\n"
-        f"🎁 {data['gift_name']}\n"
-        f"💰 {data['gift_price']}₽\n"
-        f"📝 {data.get('gift_description', 'Без описания')}\n"
-        f"🆔 ID: {gift_id}",
-        parse_mode="HTML",
-        reply_markup=get_admin_keyboard()
-    )
+    if success:
+        await message.answer(
+            f"✅ <b>Подарок добавлен!</b>\n\n"
+            f"🎁 {data['gift_name']}\n"
+            f"💰 {data['gift_price']}₽\n"
+            f"📝 {data.get('gift_description', 'Без описания')}",
+            parse_mode="HTML",
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await message.answer("❌ Ошибка при добавлении подарка.", reply_markup=get_admin_keyboard())
 
 @router.message(GiftStates.waiting_for_gift_icon)
 async def get_gift_icon(message: types.Message, state: FSMContext):
@@ -479,7 +639,7 @@ async def get_gift_icon(message: types.Message, state: FSMContext):
     await state.update_data(gift_icon=icon)
     data = await state.get_data()
     
-    gift_id = await add_gift(
+    success = add_gift(
         name=data['gift_name'],
         price=data['gift_price'],
         description=data.get('gift_description', ''),
@@ -487,27 +647,28 @@ async def get_gift_icon(message: types.Message, state: FSMContext):
     )
     
     await state.clear()
-    await message.answer(
-        f"✅ <b>Подарок добавлен!</b>\n\n"
-        f"{icon} {data['gift_name']}\n"
-        f"💰 {data['gift_price']}₽\n"
-        f"📝 {data.get('gift_description', 'Без описания')}\n"
-        f"🆔 ID: {gift_id}",
-        parse_mode="HTML",
-        reply_markup=get_admin_keyboard()
-    )
+    if success:
+        await message.answer(
+            f"✅ <b>Подарок добавлен!</b>\n\n"
+            f"{icon} {data['gift_name']}\n"
+            f"💰 {data['gift_price']}₽\n"
+            f"📝 {data.get('gift_description', 'Без описания')}",
+            parse_mode="HTML",
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await message.answer("❌ Ошибка при добавлении подарка.", reply_markup=get_admin_keyboard())
 
 # ============ ТОП ГЕРОЕВ (АДМИН) ============
 
 @router.message(lambda message: message.text == "🏆 Топ героев (админ)")
 async def admin_top_heroes(message: types.Message):
     """Просмотр топа героев для админа"""
-    if not await is_admin(message.from_user.id):
+    if not is_admin(message.from_user.id):
         await message.answer("❌ Нет доступа.")
         return
     
-    from database import get_top_heroes
-    heroes = await get_top_heroes(limit=20)
+    heroes = get_top_heroes(limit=20)
     
     if not heroes:
         await message.answer("🏆 Топ героев пока пуст.")
@@ -525,13 +686,15 @@ async def admin_top_heroes(message: types.Message):
 # ============ ВОЗВРАТ В АДМИНКУ ============
 
 @router.callback_query(lambda c: c.data == "back_to_admin")
-async def back_to_admin(callback: types.CallbackQuery):
+async def back_to_admin(callback: types.CallbackQuery, state: FSMContext):
     """Возврат в админ-панель"""
-    if not await is_admin(callback.from_user.id):
+    if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа!", show_alert=True)
         return
     
-    await callback.message.edit_text(
+    await state.clear()
+    await callback.message.delete()
+    await callback.message.answer(
         "🛠️ <b>Админ-панель</b>\n\nВыберите действие:",
         parse_mode="HTML",
         reply_markup=get_admin_keyboard()
