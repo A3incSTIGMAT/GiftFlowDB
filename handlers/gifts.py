@@ -81,7 +81,7 @@ async def gift_selected(callback: types.CallbackQuery):
         
         # Формируем ссылку для оплаты через Ozon Bank (СБП)
         user_id = callback.from_user.id
-        payment_link = f"https://finance.ozon.ru/apps/sbp/ozonbankpay/019d2edd-64d5-7781-87ea-fea6bf40d6cf?comment={user_id}"
+        payment_link = f"https://finance.ozon.ru/apps/sbp/ozonbankpay/019d71b4-afcd-739d-8e57-8ef0e95d4372?comment={user_id}"
         
         # Текст для оплаты
         payment_text = (
