@@ -4,7 +4,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-from database import register_user
+from database import register_user, get_top_heroes
 from config import SUPER_ADMIN_ID
 
 logger = logging.getLogger(__name__)
@@ -62,8 +62,8 @@ async def start_command(message: types.Message, state: FSMContext):
     
     user_id = message.from_user.id
     
-    # Регистрируем пользователя
-    await register_user(
+    # Регистрируем пользователя (синхронная функция - БЕЗ await)
+    register_user(
         user_id=user_id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
@@ -78,7 +78,6 @@ async def start_command(message: types.Message, state: FSMContext):
     
     # Обработка deep links из канала
     if deep_link == "gifts":
-        # Показываем каталог подарков
         from handlers.gifts import show_gifts_catalog
         await show_gifts_catalog(message)
         return
@@ -192,9 +191,9 @@ async def catalog_button(message: types.Message, state: FSMContext):
 async def top_heroes_button(message: types.Message, state: FSMContext):
     """Кнопка Топ героев"""
     await state.clear()
-    from database import get_top_heroes
     
-    heroes = await get_top_heroes(limit=10)
+    # Синхронная функция - БЕЗ await
+    heroes = get_top_heroes(limit=10)
     
     if not heroes:
         await message.answer(
