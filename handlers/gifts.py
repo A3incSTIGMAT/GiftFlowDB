@@ -49,7 +49,6 @@ async def show_gifts_catalog(message: types.Message):
         )
         return
     
-    # ТОЛЬКО кнопки, без текстового списка сверху
     text = "🎁 <b>Выбери подарок для Ланы:</b>"
     
     await message.answer(
@@ -79,7 +78,7 @@ async def gift_selected(callback: types.CallbackQuery):
             username=callback.from_user.username
         )
         
-        # Формируем ссылку для оплаты через Ozon Bank (СБП)
+        # НОВАЯ ССЫЛКА ДЛЯ ОПЛАТЫ
         user_id = callback.from_user.id
         payment_link = f"https://finance.ozon.ru/apps/sbp/ozonbankpay/019d71b4-afcd-739d-8e57-8ef0e95d4372?comment={user_id}"
         
@@ -100,7 +99,6 @@ async def gift_selected(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="🔙 Назад к подаркам", callback_data="back_to_gifts_catalog")]
         ])
         
-        # Удаляем старое сообщение и отправляем новое
         await callback.message.delete()
         await callback.message.answer(
             payment_text,
@@ -154,19 +152,29 @@ async def receive_receipt(message: types.Message, state: FSMContext):
     
     photo = message.photo[-1]
     
+    # Кнопки для админа
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ ПОДТВЕРДИТЬ", callback_data=f"approve_{order_id}")],
+        [InlineKeyboardButton(text="❌ ОТКЛОНИТЬ", callback_data=f"reject_{order_id}")]
+    ])
+    
     admin_text = (
         f"🧾 <b>НОВЫЙ ЧЕК!</b>\n\n"
         f"🆔 Заказ: #{order_id}\n"
         f"👤 Пользователь: @{message.from_user.username or message.from_user.first_name}\n"
-        f"🆔 ID: {message.from_user.id}\n\n"
-        f"✅ /approve_{order_id} - ПОДТВЕРДИТЬ\n"
-        f"❌ /reject_{order_id} - ОТКЛОНИТЬ"
+        f"🆔 ID: {message.from_user.id}\n"
     )
     
-    await message.bot.send_photo(SUPPORT_ADMIN_ID, photo=photo.file_id, caption=admin_text, parse_mode="HTML")
+    await message.bot.send_photo(
+        SUPPORT_ADMIN_ID,
+        photo=photo.file_id,
+        caption=admin_text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
     
     await message.answer(
-        "✅ <b>Чек отправлен на проверку!</b>\n\nСпасибо за поддержку! 💎",
+        "✅ <b>Чек отправлен на проверку!</b>\n\nАдминистратор проверит в ближайшее время.\nСпасибо за поддержку! 💎",
         parse_mode="HTML"
     )
     await state.clear()
