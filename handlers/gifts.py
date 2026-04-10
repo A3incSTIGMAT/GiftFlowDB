@@ -40,7 +40,8 @@ def get_gifts_keyboard(gifts):
 
 async def show_gifts_catalog(message: types.Message):
     """Показать каталог подарков"""
-    gifts = await get_all_gifts()
+    # Убираем await - функция синхронная
+    gifts = get_all_gifts()
     
     if not gifts:
         await message.answer(
@@ -64,21 +65,22 @@ async def gift_selected(callback: types.CallbackQuery):
     """Обработка выбора подарка"""
     try:
         gift_id = int(callback.data.split("_")[1])
-        gift = await get_gift_by_id(gift_id)
+        # Убираем await - функция синхронная
+        gift = get_gift_by_id(gift_id)
         
         if not gift:
             await callback.answer("Подарок не найден!", show_alert=True)
             return
         
-        # Создаём заказ
-        order_id = await create_order(
+        # Создаём заказ (синхронная функция)
+        order_id = create_order(
             user_id=callback.from_user.id,
             gift_id=gift_id,
             amount=gift['price'],
             username=callback.from_user.username
         )
         
-        # НОВАЯ ССЫЛКА ДЛЯ ОПЛАТЫ
+        # Новая ссылка для оплаты
         user_id = callback.from_user.id
         payment_link = f"https://finance.ozon.ru/apps/sbp/ozonbankpay/019d71b4-afcd-739d-8e57-8ef0e95d4372?comment={user_id}"
         
