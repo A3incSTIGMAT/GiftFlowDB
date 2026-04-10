@@ -2,7 +2,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
+
 from config import BOT_TOKEN, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, CHANNEL_ID
 from database import init_db, update_stats_cache, get_top_heroes
 from handlers import routers
@@ -14,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
@@ -22,7 +24,15 @@ dp = Dispatcher(storage=storage)
 for router in routers:
     dp.include_router(router)
 
-# Убираем admin.set_bot(bot) - он не нужен!
+
+async def set_commands():
+    """Установка команд бота"""
+    commands = [
+        BotCommand(command="start", description="🚀 Запустить бота"),
+        BotCommand(command="cancel", description="❌ Отменить действие"),
+        BotCommand(command="help", description="🆘 Помощь"),
+    ]
+    await bot.set_my_commands(commands)
 
 
 async def weekly_top_post():
@@ -40,7 +50,7 @@ async def weekly_top_post():
         await asyncio.sleep(wait_seconds)
         
         try:
-            heroes = await get_top_heroes(limit=10)
+            heroes = get_top_heroes(limit=10)  # <-- УБРАЛ await, функция синхронная
             
             if not heroes:
                 logger.info("Нет героев для поста")
@@ -70,7 +80,16 @@ async def weekly_top_post():
 async def on_startup():
     """Действия при запуске бота"""
     logger.info("🔄 Инициализация базы данных...")
-    await init_db()
+    
+    # init_db - синхронная функция, НЕ используем await
+    init_db()
+    logger.info("✅ База данных готова")
+    
+    # update_stats_cache - синхронная функция
+    update_stats_cache()
+    
+    # Устанавливаем команды бота
+    await set_commands()
     
     if CHANNEL_ID:
         logger.info(f"📢 Канал настроен: {CHANNEL_ID}")
@@ -85,10 +104,22 @@ async def on_startup():
     else:
         logger.warning("⚠️ CHANNEL_ID не настроен! Посты не будут публиковаться.")
     
-    await update_stats_cache()
+    # Запускаем фоновую задачу для топа (только если есть канал)
+    if CHANNEL_ID:
+        asyncio.create_task(weekly_top_post())
     
-    # Запускаем фоновую задачу для топа
-    asyncio.create_task(weekly_top_post())
+    # Уведомляем админа о запуске
+    try:
+        await bot.send_message(
+            SUPER_ADMIN_ID,
+            "🤖 <b>Бот запущен!</b>\n\n"
+            "✅ Все системы работают.\n"
+            "✅ База данных подключена.\n"
+            "✅ Обработчики загружены.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось уведомить админа: {e}")
     
     logger.info("🚀 Бот запущен! Работаю 24/7!")
     logger.info(f"👑 Супер-админ: {SUPER_ADMIN_ID}")
@@ -98,6 +129,17 @@ async def on_startup():
 async def on_shutdown():
     """Действия при остановке бота"""
     logger.info("🛑 Бот останавливается...")
+    
+    try:
+        await bot.send_message(
+            SUPER_ADMIN_ID,
+            "⚠️ <b>Бот остановлен</b>\n\nБот завершает свою работу."
+        )
+    except:
+        pass
+    
+    await bot.session.close()
+    logger.info("✅ Бот остановлен")
 
 
 async def main():
@@ -105,10 +147,19 @@ async def main():
     await on_startup()
     
     try:
-        await dp.start_polling(bot)
+        logger.info("🔄 Начинаем polling...")
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
+    except Exception as e:
+        logger.error(f"❌ Ошибка при работе бота: {e}")
+        raise
     finally:
         await on_shutdown()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("👋 Бот остановлен пользователем")
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка: {e}")
