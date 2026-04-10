@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
 
 from config import BOT_TOKEN, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, CHANNEL_ID
 from database import init_db, update_stats_cache, get_top_heroes
@@ -15,8 +16,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+# Инициализация бота и диспетчера (НОВЫЙ СИНТАКСИС для aiogram 3.7+)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
@@ -50,7 +51,7 @@ async def weekly_top_post():
         await asyncio.sleep(wait_seconds)
         
         try:
-            heroes = get_top_heroes(limit=10)  # <-- УБРАЛ await, функция синхронная
+            heroes = get_top_heroes(limit=10)
             
             if not heroes:
                 logger.info("Нет героев для поста")
@@ -81,7 +82,7 @@ async def on_startup():
     """Действия при запуске бота"""
     logger.info("🔄 Инициализация базы данных...")
     
-    # init_db - синхронная функция, НЕ используем await
+    # init_db - синхронная функция
     init_db()
     logger.info("✅ База данных готова")
     
@@ -133,7 +134,8 @@ async def on_shutdown():
     try:
         await bot.send_message(
             SUPER_ADMIN_ID,
-            "⚠️ <b>Бот остановлен</b>\n\nБот завершает свою работу."
+            "⚠️ <b>Бот остановлен</b>\n\nБот завершает свою работу.",
+            parse_mode="HTML"
         )
     except:
         pass
