@@ -146,6 +146,9 @@ def init_database():
     conn.close()
     logger.info("✅ База данных инициализирована")
 
+# Алиас для совместимости с main.py
+init_db = init_database
+
 def init_default_gifts():
     """Добавление подарков, если таблица пуста"""
     conn = get_db_connection()
@@ -611,6 +614,10 @@ def get_statistics() -> Dict:
         "total_amount": total_amount,
         "total_pending": total_pending
     }
+
+def update_stats_cache():
+    """Обновить кэш статистики (для совместимости с main.py)"""
+    return get_statistics()
 
 # ============ ФУНКЦИИ ДЛЯ ЛОГОВ ============
 
