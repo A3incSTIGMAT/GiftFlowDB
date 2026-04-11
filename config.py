@@ -3,28 +3,39 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 def parse_ids(ids_str: str) -> list:
+    """Парсит ID через пробел, запятую или оба варианта"""
     if not ids_str:
         return []
-    return [int(x.strip()) for x in ids_str.split(",") if x.strip()]
+    # Заменяем запятые на пробелы, потом разбиваем по пробелам
+    ids_str = ids_str.replace(",", " ")
+    ids_list = [x.strip() for x in ids_str.split() if x.strip()]
+    return [int(x) for x in ids_list if x.isdigit()]
 
+# Супер-админы (Лана и ты)
 SUPER_ADMIN_IDS = parse_ids(os.getenv("SUPER_ADMIN_ID", ""))
+
+# Для обратной совместимости
 SUPER_ADMIN_ID = SUPER_ADMIN_IDS[0] if SUPER_ADMIN_IDS else 0
 SUPPORT_ADMIN_ID = SUPER_ADMIN_ID
 
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 DB_PATH = os.getenv("DB_PATH", "/app/gift_bot.db")
 
+# Функция проверки админа
 def is_admin(user_id: int) -> bool:
     return user_id in SUPER_ADMIN_IDS
 
+# Ссылки на социальные сети
 TWITCH_URL = "https://twitch.tv/lana"
 INSTAGRAM_URL = "https://instagram.com/lana"
 
+# Платёжные данные
 OZON_CARD_LAST = os.getenv("OZON_CARD_LAST", "4436")
 OZON_BANK_NAME = os.getenv("OZON_BANK_NAME", "Озон Банк")
 OZON_RECEIVER = os.getenv("OZON_RECEIVER", "Александр Б.")
 OZON_SBP_QR_URL = os.getenv("OZON_SBP_QR_URL", "019d2edd-64d5-7781-87ea-fea6bf40d6cf")
 
+# Проверки
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан!")
 
