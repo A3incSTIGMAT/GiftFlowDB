@@ -9,6 +9,11 @@ DB_PATH = os.getenv("DB_PATH", "/app/gift_bot.db")
 # Список администраторов (для совместимости)
 ADMIN_IDS = [SUPER_ADMIN_ID, SUPPORT_ADMIN_ID]
 
+# Функция проверки админа (для использования в других файлах)
+def is_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь администратором"""
+    return user_id == SUPER_ADMIN_ID or user_id == SUPPORT_ADMIN_ID
+
 # Ссылки на социальные сети
 TWITCH_URL = "https://twitch.tv/lana"
 INSTAGRAM_URL = "https://instagram.com/lana"
