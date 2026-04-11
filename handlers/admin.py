@@ -12,16 +12,10 @@ from database import (
     get_statistics, get_top_heroes
 )
 from keyboards import get_admin_keyboard, get_main_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_back_to_admin_keyboard
-from config import SUPER_ADMIN_ID, CHANNEL_ID
+from config import SUPER_ADMIN_IDS, is_admin, CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
-
-# ============ ПРОВЕРКА ПРАВ ============
-
-def is_admin(user_id: int) -> bool:
-    """Проверка, является ли пользователь админом"""
-    return user_id == SUPER_ADMIN_ID
 
 # ============ КЛАВИАТУРА ДЛЯ ПОСТА В КАНАЛЕ ============
 
