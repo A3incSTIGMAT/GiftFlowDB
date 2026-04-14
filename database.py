@@ -395,6 +395,17 @@ def get_user_orders(user_id: int, limit: int = 50) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
+def get_all_orders(limit: int = 100) -> List[Dict]:
+    """Получить все заказы (для админа)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM orders ORDER BY created_at DESC LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
 # ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ ============
 
 def add_transaction(user_id: int, gift_id: int, amount: int, gift_name: str = None, payment_method: str = None) -> int:
@@ -616,7 +627,7 @@ def get_all_admins() -> List[Dict]:
 # ============ ФУНКЦИИ ДЛЯ СТАТИСТИКИ ============
 
 def get_statistics() -> Dict:
-    """Получить статистику"""
+    """Получить статистику из таблицы orders (реальные данные)"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -645,7 +656,7 @@ def update_stats_cache():
     """Обновить кэш статистики (для совместимости с main.py)"""
     return get_statistics()
 
-# ============ ФУНКЦИИ ДЛЯ ЦЕЛИ (НОВЫЕ) ============
+# ============ ФУНКЦИИ ДЛЯ ЦЕЛИ ============
 
 def get_goal() -> dict:
     """Получить текущую цель"""
