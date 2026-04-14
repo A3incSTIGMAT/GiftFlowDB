@@ -40,7 +40,6 @@ def get_gifts_keyboard(gifts):
 
 async def show_gifts_catalog(message: types.Message):
     """Показать каталог подарков"""
-    # Убираем await - функция синхронная
     gifts = get_all_gifts()
     
     if not gifts:
@@ -65,14 +64,13 @@ async def gift_selected(callback: types.CallbackQuery):
     """Обработка выбора подарка"""
     try:
         gift_id = int(callback.data.split("_")[1])
-        # Убираем await - функция синхронная
         gift = get_gift_by_id(gift_id)
         
         if not gift:
             await callback.answer("Подарок не найден!", show_alert=True)
             return
         
-        # Создаём заказ (синхронная функция)
+        # Создаём заказ
         order_id = create_order(
             user_id=callback.from_user.id,
             gift_id=gift_id,
@@ -148,7 +146,10 @@ async def receive_receipt(message: types.Message, state: FSMContext):
     order_id = data.get('order_id')
     
     if not order_id:
-        await message.answer("❌ Ошибка: заказ не найден. Начните оплату заново.", parse_mode="HTML")
+        await message.answer(
+            "❌ Ошибка: заказ не найден. Начните оплату заново.",
+            parse_mode="HTML"
+        )
         await state.clear()
         return
     
@@ -175,8 +176,13 @@ async def receive_receipt(message: types.Message, state: FSMContext):
         reply_markup=keyboard
     )
     
+    # ========== ПОДТВЕРЖДЕНИЕ ПОЛЬЗОВАТЕЛЮ, ЧТО ЧЕК ПОЛУЧЕН ==========
     await message.answer(
-        "✅ <b>Чек отправлен на проверку!</b>\n\nАдминистратор проверит в ближайшее время.\nСпасибо за поддержку! 💎",
+        "✅ <b>Чек получен!</b>\n\n"
+        "❤️ Спасибо, что поддерживаешь меня!\n"
+        "Я проверю чек в ближайшее время и напишу тебе.\n\n"
+        "Обычно это занимает несколько минут.\n"
+        "С любовью, <b>Лана</b> 💫",
         parse_mode="HTML"
     )
     await state.clear()
@@ -185,7 +191,9 @@ async def receive_receipt(message: types.Message, state: FSMContext):
 async def invalid_receipt(message: types.Message):
     """Если прислали не фото"""
     await message.answer(
-        "❌ Пожалуйста, отправьте <b>ФОТО чека</b>.\n\n❌ Отмена - /cancel",
+        "❌ Пожалуйста, отправьте <b>ФОТО чека</b>.\n\n"
+        "Сделайте скриншот перевода из банка и отправьте сюда.\n\n"
+        "❌ Отмена - /cancel",
         parse_mode="HTML"
     )
 
