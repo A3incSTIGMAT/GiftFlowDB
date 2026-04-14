@@ -101,20 +101,31 @@ async def approve_order_callback(callback: types.CallbackQuery):
             gift_name = order['gift_name']
             amount = order['amount']
             
+            # ========== БЛАГОДАРНОСТЬ ОТ ПЕРВОГО ЛИЦА (ЛАНА) ==========
+            thanks_message = (
+                f"✨ <b>СПАСИБО ТЕБЕ ЗА ПОДАРОК!</b> ✨\n\n"
+                f"🎁 <b>{gift_name}</b>\n"
+                f"💰 Сумма: <b>{amount:,}₽</b>\n\n"
+                f"❤️ <b>Я очень тронута!</b> Твоя поддержка очень важна для меня.\n\n"
+                f"🏆 Ты уже в <b>Топе героев</b>!\n"
+                f"📊 Посмотреть топ можно в главном меню.\n\n"
+                f"💫 <i>Спасибо, что ты со мной! Твоя забота даёт мне силы и вдохновение.</i>\n\n"
+                f"🔗 Подписывайся на мой канал: @lanatwitchh\n\n"
+                f"С любовью, <b>Лана</b> ❤️"
+            )
+            
             await callback.bot.send_message(
                 user_id,
-                f"✅ <b>Подарок подтверждён!</b>\n\n"
-                f"🎁 {gift_name}\n"
-                f"💰 {amount}₽\n\n"
-                f"Спасибо за поддержку! ❤️",
+                thanks_message,
                 parse_mode="HTML"
             )
             
+            # Обновляем сообщение в админке
             await callback.message.edit_caption(
-                caption=f"✅ ЗАКАЗ #{order_id} ПОДТВЕРЖДЁН\nПользователь уведомлён.",
+                caption=f"✅ ЗАКАЗ #{order_id} ПОДТВЕРЖДЁН\nПользователь уведомлён.\nСумма: {amount}₽\nПодарок: {gift_name}",
                 reply_markup=None
             )
-            await callback.answer("Подтверждено!")
+            await callback.answer("Подтверждено! Пользователю отправлена благодарность.")
         else:
             await callback.answer("Заказ не найден", show_alert=True)
     else:
@@ -136,11 +147,23 @@ async def reject_order_callback(callback: types.CallbackQuery):
             user_id = order['user_id']
             gift_name = order['gift_name']
             
-            await callback.bot.send_message(
-                user_id,
+            reject_message = (
                 f"❌ <b>Подарок не подтверждён</b>\n\n"
                 f"🎁 {gift_name}\n\n"
-                f"Проблема с чеком. Отправьте чёткий скриншот.\nВопросы: @lanatwitchh",
+                f"⚠️ <b>Причина:</b> чек не прошёл проверку.\n\n"
+                f"📸 Пожалуйста, отправьте <b>чёткий скриншот</b> перевода из банка.\n"
+                f"Скриншот должен содержать:\n"
+                f"• Сумму перевода\n"
+                f"• Дату и время\n"
+                f"• Номер заказа или комментарий\n\n"
+                f"❓ Вопросы: @lanatwitchh\n\n"
+                f"🔄 Ты можешь снова выбрать подарок и отправить новый чек.\n\n"
+                f"С любовью, <b>Лана</b> ❤️"
+            )
+            
+            await callback.bot.send_message(
+                user_id,
+                reject_message,
                 parse_mode="HTML"
             )
             
@@ -148,7 +171,7 @@ async def reject_order_callback(callback: types.CallbackQuery):
                 caption=f"❌ ЗАКАЗ #{order_id} ОТКЛОНЁН\nПользователь уведомлён.",
                 reply_markup=None
             )
-            await callback.answer("Отклонено!")
+            await callback.answer("Отклонено! Пользователь уведомлён.")
         else:
             await callback.answer("Заказ не найден", show_alert=True)
     else:
