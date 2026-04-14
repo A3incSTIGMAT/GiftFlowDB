@@ -1,12 +1,14 @@
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# Поддержка нескольких ID через пробел или запятую
 def parse_ids(ids_str: str) -> list:
-    """Парсит ID через пробел, запятую или оба варианта"""
     if not ids_str:
         return []
-    # Заменяем запятые на пробелы, потом разбиваем по пробелам
     ids_str = ids_str.replace(",", " ")
     ids_list = [x.strip() for x in ids_str.split() if x.strip()]
     return [int(x) for x in ids_list if x.isdigit()]
@@ -34,6 +36,10 @@ OZON_CARD_LAST = os.getenv("OZON_CARD_LAST", "4436")
 OZON_BANK_NAME = os.getenv("OZON_BANK_NAME", "Озон Банк")
 OZON_RECEIVER = os.getenv("OZON_RECEIVER", "Александр Б.")
 OZON_SBP_QR_URL = os.getenv("OZON_SBP_QR_URL", "019d2edd-64d5-7781-87ea-fea6bf40d6cf")
+
+# ============ НАСТРОЙКИ ЦЕЛИ ПО УМОЛЧАНИЮ ============
+DEFAULT_GOAL_NAME = "Новый компьютер для стримов"
+DEFAULT_GOAL_AMOUNT = 150000
 
 # Проверки
 if not BOT_TOKEN:
