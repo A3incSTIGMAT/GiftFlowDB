@@ -9,7 +9,8 @@ from database import (
     get_pending_orders, confirm_order, reject_order, get_order,
     add_gallery_photo, get_gallery_photos, delete_gallery_photo,
     add_gift, get_all_gifts, update_gift, delete_gift,
-    get_statistics, get_top_heroes
+    get_statistics, get_top_heroes,
+    set_goal, get_goal_progress
 )
 from keyboards import get_admin_keyboard, get_main_keyboard, get_cancel_keyboard, get_confirm_post_keyboard, get_back_to_admin_keyboard
 from config import SUPER_ADMIN_IDS, is_admin, CHANNEL_ID
@@ -126,6 +127,23 @@ async def approve_order_callback(callback: types.CallbackQuery):
                 reply_markup=None
             )
             await callback.answer("Подтверждено! Пользователю отправлена благодарность.")
+            
+            # ========== ПРОВЕРКА ПРОГРЕССА ЦЕЛИ ==========
+            progress = get_goal_progress()
+            
+            # Если цель достигнута (собрано >= цели)
+            if progress['collected'] >= progress['target']:
+                await callback.bot.send_message(
+                    CHANNEL_ID,
+                    f"🎉 <b>ЦЕЛЬ ДОСТИГНУТА!</b> 🎉\n\n"
+                    f"🎯 {progress['name']}\n"
+                    f"💰 Собрано: {progress['collected']:,}₽\n"
+                    f"🎯 Цель: {progress['target']:,}₽\n\n"
+                    f"❤️ Спасибо всем, кто поддерживал!\n"
+                    f"💫 Скоро новая цель!",
+                    parse_mode="HTML"
+                )
+            
         else:
             await callback.answer("Заказ не найден", show_alert=True)
     else:
@@ -700,6 +718,72 @@ async def admin_top_heroes(message: types.Message):
     
     await message.answer(text, parse_mode="HTML")
 
+# ============ КОМАНДА ДЛЯ УСТАНОВКИ ЦЕЛИ ============
+
+@router.message(Command("goal"))
+async def set_goal_command(message: types.Message):
+    """Установить цель: /goal Название_цели Сумма"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа.")
+        return
+    
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer(
+            "❌ <b>Использование:</b>\n"
+            "/goal Название_цели Сумма\n\n"
+            "<b>Примеры:</b>\n"
+            "/goal Роллы 3000\n"
+            "/goal Новый микрофон 15000\n"
+            "/goal Компьютер 150000",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Собираем название (всё до последнего слова)
+    goal_name = " ".join(args[1:-1])
+    try:
+        goal_amount = int(args[-1])
+    except ValueError:
+        await message.answer("❌ Сумма должна быть числом!")
+        return
+    
+    if goal_amount <= 0:
+        await message.answer("❌ Сумма должна быть больше 0!")
+        return
+    
+    # Сохраняем цель
+    set_goal(goal_name, goal_amount)
+    
+    # Получаем прогресс
+    progress = get_goal_progress()
+    
+    # Формируем пост для канала
+    post_text = f"""
+🎯 <b>НОВЫЙ СБОР: {progress['name']}</b>
+💰 Цель: {progress['target']:,}₽
+📊 Собрано: {progress['collected']:,}₽ ({progress['percent']}%)
+
+{progress['bars']} {progress['percent']}%
+
+💫 До цели: {progress['remaining']:,}₽
+
+💳 Поддержать: @GiftFlowDB_bot
+"""
+    
+    # Отправляем в канал
+    try:
+        await message.bot.send_message(CHANNEL_ID, post_text, parse_mode="HTML")
+        await message.answer(
+            f"✅ <b>Цель установлена!</b>\n\n"
+            f"🎯 {goal_name}\n"
+            f"💰 {goal_amount:,}₽\n\n"
+            f"📢 Пост отправлен в канал.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка отправки в канал: {e}")
+
 # ============ ВОЗВРАТ В АДМИНКУ ============
 
 @router.callback_query(lambda c: c.data == "back_to_admin")
@@ -717,26 +801,3 @@ async def back_to_admin(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=get_admin_keyboard()
     )
     await callback.answer()
-@router.message(Command("add_top"))
-async def add_top_manually(message: types.Message):
-    """Добавить пользователя в топ вручную: /add_top user_id username сумма"""
-    if not is_admin(message.from_user.id):
-        return
-    
-    args = message.text.split()
-    if len(args) < 4:
-        await message.answer("Использование: /add_top 895844198 username 1000")
-        return
-    
-    try:
-        user_id = int(args[1])
-        username = args[2]
-        amount = int(args[3])
-        
-        from database import update_top_heroes
-        update_top_heroes(user_id, amount, username)
-        
-        await message.answer(f"✅ Пользователь @{username} добавлен в топ с суммой {amount}₽")
-        
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
