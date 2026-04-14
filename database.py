@@ -3,7 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from config import DB_PATH, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
+from config import DB_PATH, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, DEFAULT_GOAL_NAME, DEFAULT_GOAL_AMOUNT
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,9 @@ def init_database():
     # Добавляем начальные подарки
     init_default_gifts()
     
+    # Создаём таблицу настроек
+    init_settings_table()
+    
     conn.close()
     logger.info("✅ База данных инициализирована")
 
@@ -185,6 +188,29 @@ def init_default_gifts():
         conn.commit()
         logger.info(f"✅ Добавлено {len(default_gifts)} подарков в базу")
     
+    conn.close()
+
+def init_settings_table():
+    """Создание таблицы настроек (если её нет)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            goal_name TEXT NOT NULL,
+            goal_amount INTEGER NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # Проверяем, есть ли запись. Если нет — создаём с дефолтными значениями
+    cursor.execute("SELECT COUNT(*) FROM settings WHERE id = 1")
+    count = cursor.fetchone()[0]
+    if count == 0:
+        cursor.execute("""
+            INSERT INTO settings (id, goal_name, goal_amount)
+            VALUES (1, ?, ?)
+        """, (DEFAULT_GOAL_NAME, DEFAULT_GOAL_AMOUNT))
+    conn.commit()
     conn.close()
 
 # ============ ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ============
@@ -618,6 +644,58 @@ def get_statistics() -> Dict:
 def update_stats_cache():
     """Обновить кэш статистики (для совместимости с main.py)"""
     return get_statistics()
+
+# ============ ФУНКЦИИ ДЛЯ ЦЕЛИ (НОВЫЕ) ============
+
+def get_goal() -> dict:
+    """Получить текущую цель"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT goal_name, goal_amount FROM settings WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"name": row[0], "amount": row[1]}
+    return {"name": DEFAULT_GOAL_NAME, "amount": DEFAULT_GOAL_AMOUNT}
+
+def set_goal(name: str, amount: int):
+    """Установить новую цель"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE settings SET goal_name = ?, goal_amount = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1
+    """, (name, amount))
+    conn.commit()
+    conn.close()
+
+def get_collected_amount() -> int:
+    """Получить общую сумму подтверждённых донатов"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COALESCE(SUM(amount), 0) FROM orders WHERE status = 'confirmed'")
+    result = cursor.fetchone()[0]
+    conn.close()
+    return result
+
+def get_goal_progress() -> dict:
+    """Получить прогресс цели (процент, собранная сумма, бары)"""
+    goal = get_goal()
+    collected = get_collected_amount()
+    if goal['amount'] > 0:
+        percent = int(collected / goal['amount'] * 100)
+    else:
+        percent = 0
+    bars_count = percent // 5
+    bars = "█" * bars_count + "░" * (20 - bars_count)
+    return {
+        "name": goal['name'],
+        "target": goal['amount'],
+        "collected": collected,
+        "percent": percent,
+        "bars": bars,
+        "remaining": goal['amount'] - collected
+    }
 
 # ============ ФУНКЦИИ ДЛЯ ЛОГОВ ============
 
