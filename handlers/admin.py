@@ -849,3 +849,33 @@ async def check_top(message: types.Message):
         text += f"{i}. @{hero.get('username', 'unknown')} — {hero['total_amount']}₽\n"
     
     await message.answer(text, parse_mode="HTML")
+@router.message(Command("sync_stats"))
+async def sync_statistics(message: types.Message):
+    """Синхронизировать статистику из top_heroes в orders"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    from database import get_db_connection, get_top_heroes
+    
+    heroes = get_top_heroes(limit=100)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    added = 0
+    for hero in heroes:
+        # Проверяем, есть ли уже заказ у этого пользователя
+        cursor.execute("SELECT COUNT(*) FROM orders WHERE user_id = ? AND status = 'confirmed'", (hero['user_id'],))
+        count = cursor.fetchone()[0]
+        
+        if count == 0 and hero['total_amount'] > 0:
+            # Создаём виртуальный заказ для статистики
+            cursor.execute("""
+                INSERT INTO orders (user_id, username, gift_name, amount, status, confirmed_at)
+                VALUES (?, ?, 'Ручное добавление', ?, 'confirmed', CURRENT_TIMESTAMP)
+            """, (hero['user_id'], hero.get('username'), hero['total_amount']))
+            added += 1
+    
+    conn.commit()
+    conn.close()
+    
+    await message.answer(f"✅ Статистика синхронизирована! Добавлено {added} записей в orders.\n\nТеперь /stats покажет правильные цифры.")
