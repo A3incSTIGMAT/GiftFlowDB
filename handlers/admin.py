@@ -717,3 +717,26 @@ async def back_to_admin(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=get_admin_keyboard()
     )
     await callback.answer()
+@router.message(Command("add_top"))
+async def add_top_manually(message: types.Message):
+    """Добавить пользователя в топ вручную: /add_top user_id username сумма"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    args = message.text.split()
+    if len(args) < 4:
+        await message.answer("Использование: /add_top 895844198 username 1000")
+        return
+    
+    try:
+        user_id = int(args[1])
+        username = args[2]
+        amount = int(args[3])
+        
+        from database import update_top_heroes
+        update_top_heroes(user_id, amount, username)
+        
+        await message.answer(f"✅ Пользователь @{username} добавлен в топ с суммой {amount}₽")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
