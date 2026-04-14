@@ -801,3 +801,51 @@ async def back_to_admin(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=get_admin_keyboard()
     )
     await callback.answer()
+# ============ ВРЕМЕННЫЕ КОМАНДЫ ДЛЯ ВОССТАНОВЛЕНИЯ ТОПА ============
+
+@router.message(Command("add_top"))
+async def add_top_manually(message: types.Message):
+    """Добавить пользователя в топ вручную: /add_top user_id username сумма"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа.")
+        return
+    
+    args = message.text.split()
+    if len(args) < 4:
+        await message.answer(
+            "❌ Использование: /add_top user_id username сумма\n"
+            "Пример: /add_top 8293032426 timurckij 1000"
+        )
+        return
+    
+    try:
+        user_id = int(args[1])
+        username = args[2]
+        amount = int(args[3])
+        
+        from database import update_top_heroes
+        update_top_heroes(user_id, amount, username)
+        
+        await message.answer(f"✅ @{username} добавлен в топ с суммой {amount}₽")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+@router.message(Command("check_top"))
+async def check_top(message: types.Message):
+    """Проверить текущий топ"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    from database import get_top_heroes
+    heroes = get_top_heroes(limit=10)
+    
+    if not heroes:
+        await message.answer("📭 Топ пуст")
+        return
+    
+    text = "📊 <b>ТЕКУЩИЙ ТОП</b>\n\n"
+    for i, hero in enumerate(heroes, 1):
+        text += f"{i}. @{hero.get('username', 'unknown')} — {hero['total_amount']}₽\n"
+    
+    await message.answer(text, parse_mode="HTML")
