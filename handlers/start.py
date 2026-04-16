@@ -5,16 +5,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from database import register_user, get_top_heroes, get_goal_progress
-from config import SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
+from config import is_admin
 
 logger = logging.getLogger(__name__)
 router = Router()
-
-# ============ ФУНКЦИЯ ПРОВЕРКИ АДМИНА ============
-
-def is_admin(user_id: int) -> bool:
-    """Проверка, является ли пользователь админом (супер-админ или админ поддержки)"""
-    return user_id == SUPER_ADMIN_ID or user_id == SUPPORT_ADMIN_ID
 
 # ============ ОСНОВНОЕ МЕНЮ ПОЛЬЗОВАТЕЛЯ ============
 
@@ -67,7 +61,7 @@ async def start_command(message: types.Message, state: FSMContext):
     
     user_id = message.from_user.id
     
-    # Регистрируем пользователя (синхронная функция - БЕЗ await)
+    # Регистрируем пользователя
     register_user(
         user_id=user_id,
         username=message.from_user.username,
@@ -75,7 +69,7 @@ async def start_command(message: types.Message, state: FSMContext):
         last_name=message.from_user.last_name
     )
     
-    # Проверяем deep link (то, что после /start)
+    # Проверяем deep link
     args = message.text.split()
     deep_link = args[1] if len(args) > 1 else None
     
@@ -109,7 +103,8 @@ async def start_command(message: types.Message, state: FSMContext):
     progress = get_goal_progress()
     
     # Формируем индикатор цели
-    goal_text = f"""
+    if progress['target'] > 0:
+        goal_text = f"""
 🎯 <b>ТЕКУЩИЙ СБОР: {progress['name']}</b>
 💰 Собрано: {progress['collected']:,}₽ из {progress['target']:,}₽ ({progress['percent']}%)
 
@@ -117,6 +112,8 @@ async def start_command(message: types.Message, state: FSMContext):
 
 💫 До цели: {progress['remaining']:,}₽
 """
+    else:
+        goal_text = ""
     
     # Обычный /start
     welcome_text = (
@@ -156,7 +153,8 @@ async def cancel_command(message: types.Message, state: FSMContext):
     # Получаем прогресс цели
     progress = get_goal_progress()
     
-    goal_text = f"""
+    if progress['target'] > 0:
+        goal_text = f"""
 🎯 <b>ТЕКУЩИЙ СБОР: {progress['name']}</b>
 💰 Собрано: {progress['collected']:,}₽ из {progress['target']:,}₽ ({progress['percent']}%)
 
@@ -164,6 +162,8 @@ async def cancel_command(message: types.Message, state: FSMContext):
 
 💫 До цели: {progress['remaining']:,}₽
 """
+    else:
+        goal_text = ""
     
     welcome_text = "🐉 <b>Добро пожаловать!</b>\n\n👇 Выбери действие в меню:\n\n" + goal_text
     
@@ -290,7 +290,8 @@ async def back_to_main_menu(message: types.Message, state: FSMContext):
     # Получаем прогресс цели
     progress = get_goal_progress()
     
-    goal_text = f"""
+    if progress['target'] > 0:
+        goal_text = f"""
 🎯 <b>ТЕКУЩИЙ СБОР: {progress['name']}</b>
 💰 Собрано: {progress['collected']:,}₽ из {progress['target']:,}₽ ({progress['percent']}%)
 
@@ -298,6 +299,8 @@ async def back_to_main_menu(message: types.Message, state: FSMContext):
 
 💫 До цели: {progress['remaining']:,}₽
 """
+    else:
+        goal_text = ""
     
     welcome_text = "🐉 <b>Добро пожаловать!</b>\n\n👇 Выбери действие в меню:\n\n" + goal_text
     
