@@ -5,24 +5,18 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Поддержка нескольких ID через пробел или запятую
-def parse_ids(ids_str: str) -> list:
-    if not ids_str:
-        return []
-    ids_str = ids_str.replace(",", " ")
-    ids_list = [x.strip() for x in ids_str.split() if x.strip()]
-    return [int(x) for x in ids_list if x.isdigit()]
+# Два отдельных админа
+SUPER_ADMIN_ID_1 = int(os.getenv("SUPER_ADMIN_ID_1", "0"))
+SUPER_ADMIN_ID_2 = int(os.getenv("SUPER_ADMIN_ID_2", "0"))
 
-# Супер-админы (Лана и ты)
-SUPER_ADMIN_IDS = parse_ids(os.getenv("SUPER_ADMIN_ID", ""))
+# Список всех админов
+SUPER_ADMIN_IDS = [id for id in [SUPER_ADMIN_ID_1, SUPER_ADMIN_ID_2] if id != 0]
 
 # Для обратной совместимости
-SUPER_ADMIN_ID = SUPER_ADMIN_IDS[0] if SUPER_ADMIN_IDS else 0
+SUPER_ADMIN_ID = SUPER_ADMIN_ID_1 if SUPER_ADMIN_ID_1 != 0 else SUPER_ADMIN_ID_2
 SUPPORT_ADMIN_ID = SUPER_ADMIN_ID
 
 CHANNEL_ID = os.getenv("CHANNEL_ID")
-
-# ============ ИСПРАВЛЕНО: путь должен совпадать с persistence_mount в amvera.yml ============
 DB_PATH = os.getenv("DB_PATH", "/data/gift_bot.db")
 
 # Функция проверки админа
@@ -48,7 +42,7 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан!")
 
 if not SUPER_ADMIN_IDS:
-    raise ValueError("SUPER_ADMIN_ID не задан!")
+    raise ValueError("SUPER_ADMIN_ID_1 или SUPER_ADMIN_ID_2 не заданы!")
 
 if not CHANNEL_ID:
     raise ValueError("CHANNEL_ID не задан!")
