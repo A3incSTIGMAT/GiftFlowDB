@@ -17,7 +17,7 @@ def get_user_menu_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
-            [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
+            [KeyboardButton(text="🎁 ПОДДЕРЖКА МАЛОИМУЩЕЙ"), KeyboardButton(text="🏆 Топ героев")],
             [KeyboardButton(text="❓ О конкурсе"), KeyboardButton(text="🆘 Помощь")]
         ],
         resize_keyboard=True
@@ -29,7 +29,7 @@ def get_user_menu_keyboard_with_admin():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
-            [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
+            [KeyboardButton(text="🎁 ПОДДЕРЖКА МАЛОИМУЩЕЙ"), KeyboardButton(text="🏆 Топ героев")],
             [KeyboardButton(text="❓ О конкурсе"), KeyboardButton(text="🆘 Помощь")],
             [KeyboardButton(text="👑 Админ-панель")]
         ],
