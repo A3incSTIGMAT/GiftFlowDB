@@ -1,8 +1,10 @@
 import logging
+from html import escape  # ✅ Для безопасного HTML
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.exceptions import TelegramAPIError
 
 from database import register_user, get_top_heroes, is_admin
 from config import SUPER_ADMIN_ID
@@ -14,7 +16,7 @@ router = Router()
 
 def get_user_menu_keyboard():
     """Клавиатура основного меню для пользователя"""
-    keyboard = ReplyKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
             [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
@@ -22,11 +24,10 @@ def get_user_menu_keyboard():
         ],
         resize_keyboard=True
     )
-    return keyboard
 
 def get_user_menu_keyboard_with_admin():
-    """Клавиатура основного меню для админа (с кнопкой админ-панели)"""
-    keyboard = ReplyKeyboardMarkup(
+    """Клавиатура для админа"""
+    return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
             [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
@@ -35,11 +36,10 @@ def get_user_menu_keyboard_with_admin():
         ],
         resize_keyboard=True
     )
-    return keyboard
 
 def get_admin_panel_keyboard():
     """Клавиатура админ-панели"""
-    keyboard = ReplyKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📦 Управление заказами")],
             [KeyboardButton(text="🖼️ Управление галереей")],
@@ -49,33 +49,48 @@ def get_admin_panel_keyboard():
         ],
         resize_keyboard=True
     )
-    return keyboard
+
+# ============ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ============
+
+def _safe_username(hero: dict) -> str:
+    """Безопасное получение имени пользователя с экранированием"""
+    username = hero.get('username')
+    if username:
+        return escape(username)
+    user_id = hero.get('user_id', '?')
+    return f"user_{user_id}"
+
 
 # ============ ОБРАБОТЧИК КОМАНДЫ /start ============
 
 @router.message(Command("start"))
 async def start_command(message: types.Message, state: FSMContext):
     """Обработчик команды /start с поддержкой deep links"""
-    
     await state.clear()
-    
     user_id = message.from_user.id
     
-    # Регистрируем пользователя
-    await register_user(
-        user_id=user_id,
-        username=message.from_user.username,
-        first_name=message.from_user.first_name,
-        last_name=message.from_user.last_name
-    )
+    try:
+        await register_user(
+            user_id=user_id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name
+        )
+    except Exception as e:
+        logger.error(f"❌ Ошибка регистрации пользователя {user_id}: {e}")
     
     # Проверяем deep link
-    args = message.text.split()
+    args = message.text.split() if message.text else []
     deep_link = args[1] if len(args) > 1 else None
     
     if deep_link == "gifts":
-        from handlers.gifts import show_gifts_catalog
-        await show_gifts_catalog(message)
+        # ✅ Lazy import с обработкой ошибок
+        try:
+            from handlers.gifts import show_gifts_catalog
+            await show_gifts_catalog(message)
+        except ImportError as e:
+            logger.error(f"❌ Не удалось импортировать show_gifts_catalog: {e}")
+            await message.answer("⚠️ Временная ошибка. Попробуйте позже.")
         return
     
     elif deep_link == "help":
@@ -89,11 +104,8 @@ async def start_command(message: types.Message, state: FSMContext):
             "5. Я подтвержу подарок\n\n"
             "❓ Вопросы? Пиши @lanatwitchh"
         )
-        
-        if await is_admin(user_id):
-            await message.answer(help_text, parse_mode="HTML", reply_markup=get_admin_panel_keyboard())
-        else:
-            await message.answer(help_text, parse_mode="HTML", reply_markup=get_user_menu_keyboard())
+        keyboard = get_admin_panel_keyboard() if await is_admin(user_id) else get_user_menu_keyboard()
+        await message.answer(help_text, parse_mode="HTML", reply_markup=keyboard)
         return
     
     # Обычный /start
@@ -107,18 +119,12 @@ async def start_command(message: types.Message, state: FSMContext):
         "👇 Выбери действие в меню:"
     )
     
-    if await is_admin(user_id):
-        await message.answer(
-            "👑 <b>Панель администратора</b>\n\n" + welcome_text,
-            parse_mode="HTML",
-            reply_markup=get_user_menu_keyboard_with_admin()
-        )
-    else:
-        await message.answer(
-            welcome_text,
-            parse_mode="HTML",
-            reply_markup=get_user_menu_keyboard()
-        )
+    keyboard = get_user_menu_keyboard_with_admin() if await is_admin(user_id) else get_user_menu_keyboard()
+    await message.answer(
+        ("👑 <b>Панель администратора</b>\n\n" if await is_admin(user_id) else "") + welcome_text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
 
 # ============ ОБРАБОТЧИК /cancel ============
 
@@ -131,23 +137,14 @@ async def cancel_command(message: types.Message, state: FSMContext):
     await message.answer("❌ <b>Действие отменено</b>", parse_mode="HTML")
     
     welcome_text = "🐉 <b>Добро пожаловать!</b>\n\n👇 Выбери действие в меню:"
+    keyboard = get_user_menu_keyboard_with_admin() if await is_admin(user_id) else get_user_menu_keyboard()
     
-    if await is_admin(user_id):
-        await message.answer(
-            "👑 <b>Панель администратора</b>\n\n" + welcome_text,
-            parse_mode="HTML",
-            reply_markup=get_user_menu_keyboard_with_admin()
-        )
-    else:
-        await message.answer(
-            welcome_text,
-            parse_mode="HTML",
-            reply_markup=get_user_menu_keyboard()
-        )
+    prefix = "👑 <b>Панель администратора</b>\n\n" if await is_admin(user_id) else ""
+    await message.answer(prefix + welcome_text, parse_mode="HTML", reply_markup=keyboard)
 
 # ============ ОБРАБОТКА КНОПОК МЕНЮ ============
 
-@router.message(lambda message: message.text == "📺 Twitch")
+@router.message(lambda message: message.text and message.text.strip() == "📺 Twitch")
 async def twitch_button(message: types.Message):
     """Кнопка Twitch"""
     await message.answer(
@@ -156,7 +153,7 @@ async def twitch_button(message: types.Message):
         disable_web_page_preview=True
     )
 
-@router.message(lambda message: message.text == "📷 Instagram")
+@router.message(lambda message: message.text and message.text.strip() == "📷 Instagram")
 async def instagram_button(message: types.Message):
     """Кнопка Instagram"""
     await message.answer(
@@ -165,35 +162,47 @@ async def instagram_button(message: types.Message):
         disable_web_page_preview=True
     )
 
-@router.message(lambda message: message.text == "🎁 Каталог подарков")
+@router.message(lambda message: message.text and message.text.strip() == "🎁 Каталог подарков")
 async def catalog_button(message: types.Message, state: FSMContext):
     """Кнопка каталога подарков"""
     await state.clear()
-    from handlers.gifts import show_gifts_catalog
-    await show_gifts_catalog(message)
+    try:
+        from handlers.gifts import show_gifts_catalog
+        await show_gifts_catalog(message)
+    except ImportError as e:
+        logger.error(f"❌ Ошибка импорта каталога: {e}")
+        await message.answer("⚠️ Каталог временно недоступен.")
 
-@router.message(lambda message: message.text == "🏆 Топ героев")
+@router.message(lambda message: message.text and message.text.strip() == "🏆 Топ героев")
 async def top_heroes_button(message: types.Message, state: FSMContext):
     """Кнопка Топ героев"""
     await state.clear()
     
-    heroes = await get_top_heroes(limit=10)
+    try:
+        heroes = await get_top_heroes(limit=10)
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения топа: {e}")
+        await message.answer("⚠️ Не удалось загрузить топ героев. Попробуйте позже.")
+        return
     
     if not heroes:
         await message.answer("🏆 <b>Топ героев пока пуст</b>\n\nСтань первым!", parse_mode="HTML")
         return
     
     text = "🏆 <b>Топ героев</b>\n\n"
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    
     for i, hero in enumerate(heroes, 1):
-        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         medal = medals.get(i, f"{i}.")
-        username = hero.get('username') or f"user_{hero['user_id']}"
-        text += f"{medal} @{username} — {hero['total_amount']:,}₽\n"
+        # ✅ Безопасное получение данных + экранирование
+        username = _safe_username(hero)
+        amount = hero.get('total_amount', 0) or 0
+        text += f"{medal} @{username} — {amount:,}₽\n"
     
     text += "\n💎 Топ-1 получит секретный приз!"
     await message.answer(text, parse_mode="HTML")
 
-@router.message(lambda message: message.text == "❓ О конкурсе")
+@router.message(lambda message: message.text and message.text.strip() == "❓ О конкурсе")
 async def about_contest_button(message: types.Message, state: FSMContext):
     """Кнопка О конкурсе"""
     await state.clear()
@@ -208,7 +217,7 @@ async def about_contest_button(message: types.Message, state: FSMContext):
     )
     await message.answer(contest_text, parse_mode="HTML")
 
-@router.message(lambda message: message.text == "🆘 Помощь")
+@router.message(lambda message: message.text and message.text.strip() == "🆘 Помощь")
 async def help_button(message: types.Message, state: FSMContext):
     """Кнопка Помощь"""
     await state.clear()
@@ -226,7 +235,7 @@ async def help_button(message: types.Message, state: FSMContext):
 
 # ============ ОБРАБОТКА АДМИН-ПАНЕЛИ ============
 
-@router.message(lambda message: message.text == "👑 Админ-панель")
+@router.message(lambda message: message.text and message.text.strip() == "👑 Админ-панель")
 async def admin_panel_button(message: types.Message, state: FSMContext):
     """Кнопка Админ-панель"""
     await state.clear()
@@ -237,32 +246,19 @@ async def admin_panel_button(message: types.Message, state: FSMContext):
         return
     
     admin_text = "👑 <b>Панель администратора</b>\n\nВыберите действие:"
-    
-    await message.answer(
-        admin_text,
-        parse_mode="HTML",
-        reply_markup=get_admin_panel_keyboard()
-    )
+    await message.answer(admin_text, parse_mode="HTML", reply_markup=get_admin_panel_keyboard())
 
 # ============ ВОЗВРАТ В ГЛАВНОЕ МЕНЮ ============
 
-@router.message(lambda message: message.text == "🏠 Главное меню")
+@router.message(lambda message: message.text and message.text.strip() == "🏠 Главное меню")
 async def back_to_main_menu(message: types.Message, state: FSMContext):
     """Возврат в главное меню"""
     await state.clear()
     user_id = message.from_user.id
     
     welcome_text = "🐉 <b>Добро пожаловать!</b>\n\n👇 Выбери действие в меню:"
+    keyboard = get_user_menu_keyboard_with_admin() if await is_admin(user_id) else get_user_menu_keyboard()
+    prefix = "👑 <b>Панель администратора</b>\n\n" if await is_admin(user_id) else ""
     
-    if await is_admin(user_id):
-        await message.answer(
-            "👑 <b>Панель администратора</b>\n\n" + welcome_text,
-            parse_mode="HTML",
-            reply_markup=get_user_menu_keyboard_with_admin()
-        )
-    else:
-        await message.answer(
-            welcome_text,
-            parse_mode="HTML",
-            reply_markup=get_user_menu_keyboard()
-        )
+    await message.answer(prefix + welcome_text, parse_mode="HTML", reply_markup=keyboard)
+
