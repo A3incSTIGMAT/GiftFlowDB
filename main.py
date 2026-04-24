@@ -16,22 +16,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера (НОВЫЙ СИНТАКСИС для aiogram 3.7+)
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Регистрируем все роутеры
+# ПОДКЛЮЧАЕМ ВСЕ РОУТЕРЫ
 for router in routers:
     dp.include_router(router)
 
 
 async def set_commands():
-    """Установка команд бота"""
     commands = [
         BotCommand(command="start", description="🚀 Запустить бота"),
         BotCommand(command="cancel", description="❌ Отменить действие"),
-        BotCommand(command="help", description="🆘 Помощь"),
+        BotCommand(command="admin", description="👑 Админ-панель"),
+        BotCommand(command="user", description="👤 Пользовательское меню"),
     ]
     await bot.set_my_commands(commands)
 
@@ -51,7 +50,7 @@ async def weekly_top_post():
         await asyncio.sleep(wait_seconds)
         
         try:
-            heroes = get_top_heroes(limit=10)
+            heroes = await get_top_heroes(limit=10)
             
             if not heroes:
                 logger.info("Нет героев для поста")
@@ -66,7 +65,7 @@ async def weekly_top_post():
                 else:
                     medal = "🎖️"
                 username = hero.get('username') or f"user_{hero['user_id']}"
-                post_text += f"{medal} {username} — {hero['total_amount']}₽\n"
+                post_text += f"{medal} {username} — {hero['total_amount']:,}₽\n"
             
             post_text += "\n💡 <i>Хочешь попасть в топ? Дари подарки через бота!</i>\n"
             post_text += f"👉 @{bot.username}"
@@ -79,17 +78,9 @@ async def weekly_top_post():
 
 
 async def on_startup():
-    """Действия при запуске бота"""
     logger.info("🔄 Инициализация базы данных...")
-    
-    # init_db - синхронная функция
-    init_db()
-    logger.info("✅ База данных готова")
-    
-    # update_stats_cache - синхронная функция
-    update_stats_cache()
-    
-    # Устанавливаем команды бота
+    await init_db()
+    await update_stats_cache()
     await set_commands()
     
     if CHANNEL_ID:
@@ -103,20 +94,15 @@ async def on_startup():
         except Exception as e:
             logger.warning(f"⚠️ Не удалось проверить права в канале: {e}")
     else:
-        logger.warning("⚠️ CHANNEL_ID не настроен! Посты не будут публиковаться.")
+        logger.warning("⚠️ CHANNEL_ID не настроен!")
     
-    # Запускаем фоновую задачу для топа (только если есть канал)
     if CHANNEL_ID:
         asyncio.create_task(weekly_top_post())
     
-    # Уведомляем админа о запуске
     try:
         await bot.send_message(
             SUPER_ADMIN_ID,
-            "🤖 <b>Бот запущен!</b>\n\n"
-            "✅ Все системы работают.\n"
-            "✅ База данных подключена.\n"
-            "✅ Обработчики загружены.",
+            "🤖 <b>Бот запущен!</b>\n\n✅ Все системы работают.\n✅ База данных подключена.\n✅ Обработчики загружены.",
             parse_mode="HTML"
         )
     except Exception as e:
@@ -128,31 +114,21 @@ async def on_startup():
 
 
 async def on_shutdown():
-    """Действия при остановке бота"""
     logger.info("🛑 Бот останавливается...")
-    
     try:
-        await bot.send_message(
-            SUPER_ADMIN_ID,
-            "⚠️ <b>Бот остановлен</b>\n\nБот завершает свою работу.",
-            parse_mode="HTML"
-        )
+        await bot.send_message(SUPER_ADMIN_ID, "⚠️ <b>Бот остановлен</b>", parse_mode="HTML")
     except:
         pass
-    
     await bot.session.close()
     logger.info("✅ Бот остановлен")
 
 
 async def main():
-    """Основная функция запуска"""
     await on_startup()
-    
     try:
-        logger.info("🔄 Начинаем polling...")
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     except Exception as e:
-        logger.error(f"❌ Ошибка при работе бота: {e}")
+        logger.error(f"❌ Ошибка: {e}")
         raise
     finally:
         await on_shutdown()
@@ -163,5 +139,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("👋 Бот остановлен пользователем")
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
