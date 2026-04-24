@@ -300,6 +300,36 @@ def get_pending_orders_sync() -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
+def get_all_orders_sync(limit: int = 100) -> List[Dict]:
+    """Получить все заказы"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM orders ORDER BY created_at DESC LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_order_sync(order_id: int) -> Optional[Dict]:
+    """Получить заказ по ID"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_order_status_sync(order_id: int, status: str) -> bool:
+    """Обновить статус заказа"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
+    conn.commit()
+    updated = cursor.rowcount > 0
+    conn.close()
+    return updated
+
 def confirm_order_sync(order_id: int) -> bool:
     """Подтвердить заказ"""
     conn = get_db_connection()
@@ -314,14 +344,20 @@ def confirm_order_sync(order_id: int) -> bool:
     conn.close()
     
     if updated:
-        conn2 = get_db_connection()
-        cursor2 = conn2.cursor()
-        cursor2.execute("SELECT user_id, amount, username FROM orders WHERE id = ?", (order_id,))
-        order = cursor2.fetchone()
-        conn2.close()
+        order = get_order_sync(order_id)
         if order:
-            update_top_heroes_sync(order['user_id'], order['amount'], order['username'])
+            update_top_heroes_sync(order['user_id'], order['amount'], order.get('username'))
     
+    return updated
+
+def reject_order_sync(order_id: int) -> bool:
+    """Отклонить заказ"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET status = 'rejected' WHERE id = ?", (order_id,))
+    conn.commit()
+    updated = cursor.rowcount > 0
+    conn.close()
     return updated
 
 # ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ ============
@@ -357,13 +393,9 @@ def update_transaction_status_sync(transaction_id: int, status: str, confirmed_b
     conn.close()
     
     if updated and status == 'paid':
-        conn2 = get_db_connection()
-        cursor2 = conn2.cursor()
-        cursor2.execute("SELECT user_id, amount, username FROM transactions WHERE id = ?", (transaction_id,))
-        transaction = cursor2.fetchone()
-        conn2.close()
+        transaction = get_transaction_by_id_sync(transaction_id)
         if transaction:
-            update_top_heroes_sync(transaction['user_id'], transaction['amount'], transaction['username'])
+            update_top_heroes_sync(transaction['user_id'], transaction['amount'], transaction.get('username'))
     
     return updated
 
@@ -397,6 +429,15 @@ def get_all_transactions_sync(limit: int = 100) -> List[Dict]:
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def get_transaction_by_id_sync(transaction_id: int) -> Optional[Dict]:
+    """Получить транзакцию по ID"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 # ============ ФУНКЦИИ ДЛЯ ТОПА ГЕРОЕВ ============
 
@@ -494,6 +535,46 @@ def is_super_admin_sync(user_id: int) -> bool:
     """Проверка, является ли пользователь супер-админом"""
     return user_id == SUPER_ADMIN_ID
 
+def add_admin_sync(user_id: int, username: str = None, added_by: int = None) -> bool:
+    """Добавить администратора"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT OR REPLACE INTO admins (user_id, username, added_by)
+            VALUES (?, ?, ?)
+        """, (user_id, username, added_by or SUPER_ADMIN_ID))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка добавления админа: {e}")
+        return False
+    finally:
+        conn.close()
+
+def remove_admin_sync(user_id: int) -> bool:
+    """Удалить администратора"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
+    conn.commit()
+    deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
+
+def get_all_admins_sync() -> List[Dict]:
+    """Получить список всех администраторов"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT user_id, username, added_by, added_at 
+        FROM admins 
+        ORDER BY added_at DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
 # ============ ФУНКЦИИ ДЛЯ СТАТИСТИКИ ============
 
 def get_statistics_sync() -> Dict:
@@ -528,23 +609,30 @@ def get_stats_sync() -> Dict:
     """Алиас для get_statistics_sync"""
     return get_statistics_sync()
 
+def update_stats_cache_sync():
+    """Обновить кэш статистики"""
+    return get_statistics_sync()
+
 # ============ ФУНКЦИИ ДЛЯ ЦЕЛИ ============
 
-def get_goal_progress_sync() -> dict:
-    """Получить прогресс цели"""
+def get_goal_sync() -> dict:
+    """Получить текущую цель"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT goal_name, goal_amount FROM settings WHERE id = 1")
     row = cursor.fetchone()
     conn.close()
-    
-    goal_name = row[0] if row else DEFAULT_GOAL_NAME
-    goal_amount = row[1] if row else DEFAULT_GOAL_AMOUNT
-    
+    if row:
+        return {"name": row[0], "amount": row[1]}
+    return {"name": DEFAULT_GOAL_NAME, "amount": DEFAULT_GOAL_AMOUNT}
+
+def get_goal_progress_sync() -> dict:
+    """Получить прогресс цели"""
+    goal = get_goal_sync()
     collected = get_statistics_sync()['total_amount']
     
-    if goal_amount > 0:
-        percent = int(collected / goal_amount * 100)
+    if goal['amount'] > 0:
+        percent = int(collected / goal['amount'] * 100)
         if percent > 100:
             percent = 100
     else:
@@ -554,12 +642,12 @@ def get_goal_progress_sync() -> dict:
     bars = "█" * bars_count + "░" * (20 - bars_count)
     
     return {
-        "name": goal_name,
-        "target": goal_amount,
+        "name": goal['name'],
+        "target": goal['amount'],
         "collected": collected,
         "percent": percent,
         "bars": bars,
-        "remaining": goal_amount - collected if collected < goal_amount else 0
+        "remaining": goal['amount'] - collected if collected < goal['amount'] else 0
     }
 
 # ============ АСИНХРОННЫЕ ОБЁРТКИ (ДЛЯ ОСНОВНОГО КОДА) ============
@@ -576,6 +664,24 @@ async def get_gift_by_id(gift_id: int):
 async def create_order(user_id: int, gift_id: int, amount: int, username: str = None):
     return create_order_sync(user_id, gift_id, amount, username)
 
+async def get_pending_orders():
+    return get_pending_orders_sync()
+
+async def get_all_orders(limit: int = 100):
+    return get_all_orders_sync(limit)
+
+async def get_order(order_id: int):
+    return get_order_sync(order_id)
+
+async def update_order_status(order_id: int, status: str):
+    return update_order_status_sync(order_id, status)
+
+async def confirm_order(order_id: int):
+    return confirm_order_sync(order_id)
+
+async def reject_order(order_id: int):
+    return reject_order_sync(order_id)
+
 async def add_transaction(user_id: int, gift_id: int, amount: int, payment_method: str = None):
     return add_transaction_sync(user_id, gift_id, amount, payment_method)
 
@@ -589,10 +695,10 @@ async def get_all_transactions(limit: int = 100):
     return get_all_transactions_sync(limit)
 
 async def update_stats_cache():
-    return get_statistics_sync()
+    return update_stats_cache_sync()
 
 async def get_stats():
-    return get_statistics_sync()
+    return get_stats_sync()
 
 async def get_top_heroes(limit: int = 10):
     return get_top_heroes_sync(limit)
@@ -620,6 +726,15 @@ async def delete_gallery_photo(photo_id: int):
 
 async def add_gift(name: str, price: int, description: str = "", icon: str = "🎁"):
     return add_gift_sync(name, price, description, icon)
+
+async def add_admin(user_id: int, username: str = None, added_by: int = None):
+    return add_admin_sync(user_id, username, added_by)
+
+async def remove_admin(user_id: int):
+    return remove_admin_sync(user_id)
+
+async def get_all_admins():
+    return get_all_admins_sync()
 
 # ============ ИНИЦИАЛИЗАЦИЯ ============
 
