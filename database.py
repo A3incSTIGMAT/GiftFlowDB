@@ -163,9 +163,6 @@ def init_database():
     conn.close()
     logger.info("✅ База данных инициализирована")
 
-# Алиас для совместимости с main.py
-init_db = init_database
-
 def init_settings():
     """Инициализация таблицы настроек с дефолтными значениями"""
     conn = get_db_connection()
@@ -218,9 +215,9 @@ def init_default_gifts():
     
     conn.close()
 
-# ============ ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ============
+# ============ ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ (СИНХРОННЫЕ) ============
 
-def register_user(user_id: int, username: str = None, first_name: str = None, last_name: str = None):
+def register_user_sync(user_id: int, username: str = None, first_name: str = None, last_name: str = None):
     """Регистрация или обновление пользователя"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -231,7 +228,7 @@ def register_user(user_id: int, username: str = None, first_name: str = None, la
     conn.commit()
     conn.close()
 
-def get_user(user_id: int) -> Optional[Dict]:
+def get_user_sync(user_id: int) -> Optional[Dict]:
     """Получить пользователя по ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -240,9 +237,9 @@ def get_user(user_id: int) -> Optional[Dict]:
     conn.close()
     return dict(row) if row else None
 
-# ============ ФУНКЦИИ ДЛЯ ПОДАРКОВ ============
+# ============ ФУНКЦИИ ДЛЯ ПОДАРКОВ (СИНХРОННЫЕ) ============
 
-def get_all_gifts(active_only: bool = True) -> List[Dict]:
+def get_all_gifts_sync(active_only: bool = True) -> List[Dict]:
     """Получить все подарки"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -256,7 +253,7 @@ def get_all_gifts(active_only: bool = True) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def get_gift_by_id(gift_id: int) -> Optional[Dict]:
+def get_gift_by_id_sync(gift_id: int) -> Optional[Dict]:
     """Получить подарок по ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -265,7 +262,7 @@ def get_gift_by_id(gift_id: int) -> Optional[Dict]:
     conn.close()
     return dict(row) if row else None
 
-def add_gift(name: str, price: int, description: str = "", icon: str = "🎁") -> int:
+def add_gift_sync(name: str, price: int, description: str = "", icon: str = "🎁") -> int:
     """Добавить новый подарок"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -278,7 +275,7 @@ def add_gift(name: str, price: int, description: str = "", icon: str = "🎁") -
     conn.close()
     return gift_id
 
-def update_gift(gift_id: int, **kwargs):
+def update_gift_sync(gift_id: int, **kwargs):
     """Обновить информацию о подарке"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -295,7 +292,7 @@ def update_gift(gift_id: int, **kwargs):
         conn.commit()
     conn.close()
 
-def delete_gift(gift_id: int) -> bool:
+def delete_gift_sync(gift_id: int) -> bool:
     """Удалить подарок"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -305,14 +302,14 @@ def delete_gift(gift_id: int) -> bool:
     conn.close()
     return deleted
 
-# ============ ФУНКЦИИ ДЛЯ ЗАКАЗОВ ============
+# ============ ФУНКЦИИ ДЛЯ ЗАКАЗОВ (СИНХРОННЫЕ) ============
 
-def create_order(user_id: int, gift_id: int, amount: int, username: str = None) -> int:
+def create_order_sync(user_id: int, gift_id: int, amount: int, username: str = None) -> int:
     """Создать новый заказ"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    gift = get_gift_by_id(gift_id)
+    gift = get_gift_by_id_sync(gift_id)
     gift_name = gift['name'] if gift else f"Подарок #{gift_id}"
     
     cursor.execute("""
@@ -324,7 +321,7 @@ def create_order(user_id: int, gift_id: int, amount: int, username: str = None) 
     conn.close()
     return order_id
 
-def get_order(order_id: int) -> Optional[Dict]:
+def get_order_sync(order_id: int) -> Optional[Dict]:
     """Получить заказ по ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -333,7 +330,7 @@ def get_order(order_id: int) -> Optional[Dict]:
     conn.close()
     return dict(row) if row else None
 
-def get_pending_orders() -> List[Dict]:
+def get_pending_orders_sync() -> List[Dict]:
     """Получить все заказы со статусом pending"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -348,7 +345,7 @@ def get_pending_orders() -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def confirm_order(order_id: int) -> bool:
+def confirm_order_sync(order_id: int) -> bool:
     """Подтвердить заказ"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -361,15 +358,14 @@ def confirm_order(order_id: int) -> bool:
     updated = cursor.rowcount > 0
     conn.close()
     
-    # Обновляем топ героев
     if updated:
-        order = get_order(order_id)
+        order = get_order_sync(order_id)
         if order:
-            update_top_heroes(order['user_id'], order['amount'], order.get('username'))
+            update_top_heroes_sync(order['user_id'], order['amount'], order.get('username'))
     
     return updated
 
-def reject_order(order_id: int) -> bool:
+def reject_order_sync(order_id: int) -> bool:
     """Отклонить заказ"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -379,7 +375,7 @@ def reject_order(order_id: int) -> bool:
     conn.close()
     return updated
 
-def update_order_status(order_id: int, status: str) -> bool:
+def update_order_status_sync(order_id: int, status: str) -> bool:
     """Обновить статус заказа"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -389,7 +385,7 @@ def update_order_status(order_id: int, status: str) -> bool:
     conn.close()
     return updated
 
-def get_user_orders(user_id: int, limit: int = 50) -> List[Dict]:
+def get_user_orders_sync(user_id: int, limit: int = 50) -> List[Dict]:
     """Получить заказы пользователя"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -400,7 +396,7 @@ def get_user_orders(user_id: int, limit: int = 50) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def get_all_orders(limit: int = 100) -> List[Dict]:
+def get_all_orders_sync(limit: int = 100) -> List[Dict]:
     """Получить все заказы (для админа)"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -411,7 +407,7 @@ def get_all_orders(limit: int = 100) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def get_pending_orders_count() -> int:
+def get_pending_orders_count_sync() -> int:
     """Получить количество ожидающих заказов"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -420,15 +416,15 @@ def get_pending_orders_count() -> int:
     conn.close()
     return count
 
-# ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ ============
+# ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ (СИНХРОННЫЕ) ============
 
-def add_transaction(user_id: int, gift_id: int, amount: int, gift_name: str = None, payment_method: str = None) -> int:
+def add_transaction_sync(user_id: int, gift_id: int, amount: int, gift_name: str = None, payment_method: str = None) -> int:
     """Добавить новую транзакцию"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     if not gift_name:
-        gift = get_gift_by_id(gift_id)
+        gift = get_gift_by_id_sync(gift_id)
         gift_name = gift['name'] if gift else f"Подарок #{gift_id}"
     
     cursor.execute("""
@@ -440,7 +436,7 @@ def add_transaction(user_id: int, gift_id: int, amount: int, gift_name: str = No
     conn.close()
     return transaction_id
 
-def update_transaction_status(transaction_id: int, status: str, confirmed_by: int = None) -> bool:
+def update_transaction_status_sync(transaction_id: int, status: str, confirmed_by: int = None) -> bool:
     """Обновить статус транзакции"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -453,15 +449,14 @@ def update_transaction_status(transaction_id: int, status: str, confirmed_by: in
     updated = cursor.rowcount > 0
     conn.close()
     
-    # Если транзакция подтверждена, обновляем топ героев
     if updated and status == 'paid':
-        transaction = get_transaction_by_id(transaction_id)
+        transaction = get_transaction_by_id_sync(transaction_id)
         if transaction:
-            update_top_heroes(transaction['user_id'], transaction['amount'], transaction.get('username'))
+            update_top_heroes_sync(transaction['user_id'], transaction['amount'], transaction.get('username'))
     
     return updated
 
-def get_pending_transactions(limit: int = 50) -> List[Dict]:
+def get_pending_transactions_sync(limit: int = 50) -> List[Dict]:
     """Получить ожидающие подтверждения транзакции"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -477,7 +472,7 @@ def get_pending_transactions(limit: int = 50) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def get_all_transactions(limit: int = 100) -> List[Dict]:
+def get_all_transactions_sync(limit: int = 100) -> List[Dict]:
     """Получить все транзакции (для админа)"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -492,7 +487,7 @@ def get_all_transactions(limit: int = 100) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def get_transaction_by_id(transaction_id: int) -> Optional[Dict]:
+def get_transaction_by_id_sync(transaction_id: int) -> Optional[Dict]:
     """Получить транзакцию по ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -501,9 +496,9 @@ def get_transaction_by_id(transaction_id: int) -> Optional[Dict]:
     conn.close()
     return dict(row) if row else None
 
-# ============ ФУНКЦИИ ДЛЯ ТОПА ГЕРОЕВ ============
+# ============ ФУНКЦИИ ДЛЯ ТОПА ГЕРОЕВ (СИНХРОННЫЕ) ============
 
-def update_top_heroes(user_id: int, amount: int, username: str = None):
+def update_top_heroes_sync(user_id: int, amount: int, username: str = None):
     """Обновить топ героев после доната"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -527,7 +522,7 @@ def update_top_heroes(user_id: int, amount: int, username: str = None):
     conn.commit()
     conn.close()
 
-def get_top_heroes(limit: int = 10) -> List[Dict]:
+def get_top_heroes_sync(limit: int = 10) -> List[Dict]:
     """Получить топ героев"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -541,17 +536,17 @@ def get_top_heroes(limit: int = 10) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def get_user_rank(user_id: int) -> Optional[int]:
+def get_user_rank_sync(user_id: int) -> Optional[int]:
     """Получить место пользователя в топе"""
-    heroes = get_top_heroes(limit=100)
+    heroes = get_top_heroes_sync(limit=100)
     for i, hero in enumerate(heroes):
         if hero["user_id"] == user_id:
             return i + 1
     return None
 
-# ============ ФУНКЦИИ ДЛЯ ГАЛЕРЕИ ============
+# ============ ФУНКЦИИ ДЛЯ ГАЛЕРЕИ (СИНХРОННЫЕ) ============
 
-def add_gallery_photo(file_id: str, description: str = "", added_by: int = None) -> int:
+def add_gallery_photo_sync(file_id: str, description: str = "", added_by: int = None) -> int:
     """Добавить фото в галерею"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -564,7 +559,7 @@ def add_gallery_photo(file_id: str, description: str = "", added_by: int = None)
     conn.close()
     return photo_id
 
-def get_gallery_photos(limit: int = 50) -> List[Dict]:
+def get_gallery_photos_sync(limit: int = 50) -> List[Dict]:
     """Получить фото из галереи"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -578,7 +573,7 @@ def get_gallery_photos(limit: int = 50) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-def delete_gallery_photo(photo_id: int) -> bool:
+def delete_gallery_photo_sync(photo_id: int) -> bool:
     """Удалить фото из галереи"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -588,13 +583,13 @@ def delete_gallery_photo(photo_id: int) -> bool:
     conn.close()
     return deleted
 
-# ============ АДМИН ФУНКЦИИ ============
+# ============ АДМИН ФУНКЦИИ (СИНХРОННЫЕ) ============
 
-def is_super_admin(user_id: int) -> bool:
+def is_super_admin_sync(user_id: int) -> bool:
     """Проверка, является ли пользователь супер-админом"""
     return user_id == SUPER_ADMIN_ID
 
-def is_admin(user_id: int) -> bool:
+def is_admin_sync(user_id: int) -> bool:
     """Проверка, является ли пользователь админом"""
     if user_id == SUPER_ADMIN_ID or user_id == SUPPORT_ADMIN_ID:
         return True
@@ -605,7 +600,7 @@ def is_admin(user_id: int) -> bool:
     conn.close()
     return row is not None
 
-def add_admin(user_id: int, username: str = None, added_by: int = None) -> bool:
+def add_admin_sync(user_id: int, username: str = None, added_by: int = None) -> bool:
     """Добавить администратора"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -622,7 +617,7 @@ def add_admin(user_id: int, username: str = None, added_by: int = None) -> bool:
     finally:
         conn.close()
 
-def remove_admin(user_id: int) -> bool:
+def remove_admin_sync(user_id: int) -> bool:
     """Удалить администратора"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -632,7 +627,7 @@ def remove_admin(user_id: int) -> bool:
     conn.close()
     return deleted
 
-def get_all_admins() -> List[Dict]:
+def get_all_admins_sync() -> List[Dict]:
     """Получить список всех администраторов"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -645,9 +640,9 @@ def get_all_admins() -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
-# ============ ФУНКЦИИ ДЛЯ СТАТИСТИКИ ============
+# ============ ФУНКЦИИ ДЛЯ СТАТИСТИКИ (СИНХРОННЫЕ) ============
 
-def get_statistics() -> Dict:
+def get_statistics_sync() -> Dict:
     """Получить статистику из таблицы orders (реальные данные)"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -673,17 +668,17 @@ def get_statistics() -> Dict:
         "total_pending": total_pending
     }
 
-def get_stats() -> Dict:
-    """Алиас для get_statistics (для совместимости)"""
-    return get_statistics()
+def get_stats_sync() -> Dict:
+    """Алиас для get_statistics_sync"""
+    return get_statistics_sync()
 
-def update_stats_cache():
-    """Обновить кэш статистики (для совместимости с main.py)"""
-    return get_statistics()
+def update_stats_cache_sync():
+    """Обновить кэш статистики"""
+    return get_statistics_sync()
 
-# ============ ФУНКЦИИ ДЛЯ ЦЕЛИ ============
+# ============ ФУНКЦИИ ДЛЯ ЦЕЛИ (СИНХРОННЫЕ) ============
 
-def get_goal() -> dict:
+def get_goal_sync() -> dict:
     """Получить текущую цель"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -694,7 +689,7 @@ def get_goal() -> dict:
         return {"name": row[0], "amount": row[1]}
     return {"name": DEFAULT_GOAL_NAME, "amount": DEFAULT_GOAL_AMOUNT}
 
-def set_goal(name: str, amount: int):
+def set_goal_sync(name: str, amount: int):
     """Установить новую цель"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -705,7 +700,7 @@ def set_goal(name: str, amount: int):
     conn.commit()
     conn.close()
 
-def get_collected_amount() -> int:
+def get_collected_amount_sync() -> int:
     """Получить общую сумму подтверждённых донатов"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -714,10 +709,10 @@ def get_collected_amount() -> int:
     conn.close()
     return result
 
-def get_goal_progress() -> dict:
+def get_goal_progress_sync() -> dict:
     """Получить прогресс цели (процент, собранная сумма, бары)"""
-    goal = get_goal()
-    collected = get_collected_amount()
+    goal = get_goal_sync()
+    collected = get_collected_amount_sync()
     
     if goal['amount'] > 0:
         percent = int(collected / goal['amount'] * 100)
@@ -726,7 +721,6 @@ def get_goal_progress() -> dict:
     else:
         percent = 0
     
-    # Бары для отображения (20 символов)
     bars_count = percent // 5
     bars = "█" * bars_count + "░" * (20 - bars_count)
     
@@ -739,9 +733,9 @@ def get_goal_progress() -> dict:
         "remaining": goal['amount'] - collected if collected < goal['amount'] else 0
     }
 
-# ============ ФУНКЦИИ ДЛЯ ЛОГОВ ============
+# ============ ФУНКЦИИ ДЛЯ ЛОГОВ (СИНХРОННЫЕ) ============
 
-def log_admin_action(admin_id: int, action: str, details: str = None):
+def log_admin_action_sync(admin_id: int, action: str, details: str = None):
     """Записать действие админа в лог"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -751,6 +745,65 @@ def log_admin_action(admin_id: int, action: str, details: str = None):
     """, (admin_id, action, details))
     conn.commit()
     conn.close()
+
+# ============ АСИНХРОННЫЕ ОБЁРТКИ ДЛЯ СОВМЕСТИМОСТИ ============
+
+async def init_db():
+    init_database()
+
+async def update_stats_cache():
+    return get_statistics_sync()
+
+async def get_stats():
+    return get_statistics_sync()
+
+async def get_top_heroes(limit: int = 10):
+    return get_top_heroes_sync(limit)
+
+async def is_admin(user_id: int):
+    return is_admin_sync(user_id)
+
+async def is_super_admin(user_id: int):
+    return is_super_admin_sync(user_id)
+
+async def register_user(user_id: int, username: str = None, first_name: str = None, last_name: str = None):
+    register_user_sync(user_id, username, first_name, last_name)
+
+async def get_gift_by_id(gift_id: int):
+    return get_gift_by_id_sync(gift_id)
+
+async def get_all_gifts(active_only: bool = True):
+    return get_all_gifts_sync(active_only)
+
+async def add_transaction(user_id: int, gift_id: int, amount: int, payment_method: str = None):
+    return add_transaction_sync(user_id, gift_id, amount, payment_method)
+
+async def update_transaction_status(transaction_id: int, status: str, confirmed_by: int = None):
+    return update_transaction_status_sync(transaction_id, status, confirmed_by)
+
+async def get_pending_transactions(limit: int = 50):
+    return get_pending_transactions_sync(limit)
+
+async def get_all_transactions(limit: int = 100):
+    return get_all_transactions_sync(limit)
+
+async def update_top_heroes(user_id: int, amount: int, username: str = None):
+    update_top_heroes_sync(user_id, amount, username)
+
+async def get_goal_progress():
+    return get_goal_progress_sync()
+
+async def add_gallery_photo(file_id: str, description: str = "", added_by: int = None):
+    return add_gallery_photo_sync(file_id, description, added_by)
+
+async def get_gallery_photos(limit: int = 50):
+    return get_gallery_photos_sync(limit)
+
+async def delete_gallery_photo(photo_id: int):
+    return delete_gallery_photo_sync(photo_id)
+
+async def add_gift(name: str, price: int, description: str = "", icon: str = "🎁"):
+    return add_gift_sync(name, price, description, icon)
 
 # ============ ИНИЦИАЛИЗАЦИЯ ============
 
