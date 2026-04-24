@@ -362,6 +362,20 @@ def update_gift_sync(gift_id: int, name: str = None, price: int = None,
         return False
 
 
+def delete_gift_sync(gift_id: int) -> bool:
+    """Удалить подарок"""
+    if not isinstance(gift_id, int) or gift_id <= 0:
+        return False
+    
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute("DELETE FROM gifts WHERE id = ?", (gift_id,))
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка удаления подарка #{gift_id}: {e}")
+        return False
+
+
 # ============ ФУНКЦИИ ДЛЯ ЗАКАЗОВ ============
 
 def create_order_sync(user_id: int, gift_id: int, amount: int, username: str = None) -> int:
@@ -822,11 +836,12 @@ async def get_all_gifts(active_only=True): return await asyncio.to_thread(get_al
 async def get_gift_by_id(gift_id): return await asyncio.to_thread(get_gift_by_id_sync, gift_id)
 async def add_gift(name, price, description="", icon="🎁", is_active=1): return await asyncio.to_thread(add_gift_sync, name, price, description, icon, is_active)
 async def update_gift(gift_id, name=None, price=None, description=None, icon=None, is_active=None): return await asyncio.to_thread(update_gift_sync, gift_id, name, price, description, icon, is_active)
+async def delete_gift(gift_id): return await asyncio.to_thread(delete_gift_sync, gift_id)
 async def create_order(user_id, gift_id, amount, username=None): return await asyncio.to_thread(create_order_sync, user_id, gift_id, amount, username)
 async def get_pending_orders(limit=100): return await asyncio.to_thread(get_pending_orders_sync, limit)
 async def get_all_orders(limit=100): return await asyncio.to_thread(get_all_orders_sync, limit)
 async def get_order_by_id(order_id): return await asyncio.to_thread(get_order_by_id_sync, order_id)
-async def get_order(order_id): return await asyncio.to_thread(get_order_by_id_sync, order_id)  # Алиас для admin.py
+async def get_order(order_id): return await asyncio.to_thread(get_order_by_id_sync, order_id)
 async def confirm_order(order_id, confirmed_by=None): return await asyncio.to_thread(confirm_order_sync, order_id, confirmed_by)
 async def reject_order(order_id, confirmed_by=None): return await asyncio.to_thread(reject_order_sync, order_id, confirmed_by)
 async def cancel_order(order_id): return await asyncio.to_thread(cancel_order_sync, order_id)
@@ -856,10 +871,10 @@ __all__ = [
     'init_db', 'init_database', 'get_db_connection', 'get_db_cursor',
     'register_user', 'register_user_sync', 'get_user', 'get_user_sync',
     'get_all_gifts', 'get_all_gifts_sync', 'get_gift_by_id', 'get_gift_by_id_sync',
-    'add_gift', 'add_gift_sync', 'update_gift', 'update_gift_sync',
+    'add_gift', 'add_gift_sync', 'update_gift', 'update_gift_sync', 'delete_gift', 'delete_gift_sync',
     'create_order', 'create_order_sync', 'get_pending_orders', 'get_pending_orders_sync',
     'get_all_orders', 'get_all_orders_sync', 'get_order_by_id', 'get_order_by_id_sync',
-    'get_order', 'get_order_sync',  # Добавлено для совместимости
+    'get_order', 'get_order_sync',
     'confirm_order', 'confirm_order_sync', 'reject_order', 'reject_order_sync',
     'cancel_order', 'cancel_order_sync',
     'add_transaction', 'add_transaction_sync', 'update_transaction_status', 'update_transaction_status_sync',
