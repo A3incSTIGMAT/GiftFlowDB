@@ -400,6 +400,21 @@ def get_pending_orders_sync(limit: int = 100) -> List[Dict]:
         return []
 
 
+def get_all_orders_sync(limit: int = 100) -> List[Dict]:
+    """Получить все заказы"""
+    try:
+        with get_db_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT o.*, u.username as user_username, u.first_name
+                FROM orders o LEFT JOIN users u ON o.user_id = u.user_id
+                ORDER BY o.created_at DESC LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения заказов: {e}")
+        return []
+
+
 def get_order_by_id_sync(order_id: int) -> Optional[Dict]:
     """Получить заказ по ID"""
     if not isinstance(order_id, int) or order_id <= 0: return None
@@ -443,6 +458,30 @@ def confirm_order_sync(order_id: int, confirmed_by: int = None) -> bool:
             return False
     except sqlite3.Error as e:
         logger.error(f"❌ Ошибка подтверждения заказа #{order_id}: {e}")
+        return False
+
+
+def reject_order_sync(order_id: int, confirmed_by: int = None) -> bool:
+    """Отклонить заказ"""
+    if not isinstance(order_id, int) or order_id <= 0: return False
+    
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute("""
+                SELECT user_id FROM orders WHERE id = ? AND status = 'pending'
+            """, (order_id,))
+            order = cursor.fetchone()
+            
+            if not order: return False
+            
+            cursor.execute("""
+                UPDATE orders SET status = 'rejected', confirmed_at = CURRENT_TIMESTAMP, confirmed_by = ?
+                WHERE id = ?
+            """, (confirmed_by, order_id))
+            
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка отклонения заказа #{order_id}: {e}")
         return False
 
 
@@ -723,10 +762,7 @@ def get_stats_sync() -> Dict[str, Any]:
 
 
 def update_stats_cache_sync() -> Dict[str, Any]:
-    """
-    Обратная совместимость: алиас для get_statistics_sync().
-    Сохранено для работы с существующим main.py
-    """
+    """Обновить кэш статистики"""
     return get_statistics_sync()
 
 
@@ -773,7 +809,7 @@ def update_goal_sync(goal_name: str = None, goal_amount: int = None) -> bool:
         return False
 
 
-# ============ АСИНХРОННЫЕ ОБЁРТКИ (НЕБЛОКИРУЮЩИЕ) ============
+# ============ АСИНХРОННЫЕ ОБЁРТКИ ============
 
 async def init_db(): return await asyncio.to_thread(init_database)
 async def register_user(user_id, username=None, first_name=None, last_name=None): return await asyncio.to_thread(register_user_sync, user_id, username, first_name, last_name)
@@ -784,8 +820,10 @@ async def add_gift(name, price, description="", icon="🎁", is_active=1): retur
 async def update_gift(gift_id, name=None, price=None, description=None, icon=None, is_active=None): return await asyncio.to_thread(update_gift_sync, gift_id, name, price, description, icon, is_active)
 async def create_order(user_id, gift_id, amount, username=None): return await asyncio.to_thread(create_order_sync, user_id, gift_id, amount, username)
 async def get_pending_orders(limit=100): return await asyncio.to_thread(get_pending_orders_sync, limit)
+async def get_all_orders(limit=100): return await asyncio.to_thread(get_all_orders_sync, limit)
 async def get_order_by_id(order_id): return await asyncio.to_thread(get_order_by_id_sync, order_id)
 async def confirm_order(order_id, confirmed_by=None): return await asyncio.to_thread(confirm_order_sync, order_id, confirmed_by)
+async def reject_order(order_id, confirmed_by=None): return await asyncio.to_thread(reject_order_sync, order_id, confirmed_by)
 async def cancel_order(order_id): return await asyncio.to_thread(cancel_order_sync, order_id)
 async def add_transaction(user_id, gift_id, amount, payment_method=None, order_id=None): return await asyncio.to_thread(add_transaction_sync, user_id, gift_id, amount, payment_method, order_id)
 async def update_transaction_status(transaction_id, status, confirmed_by=None): return await asyncio.to_thread(update_transaction_status_sync, transaction_id, status, confirmed_by)
@@ -803,29 +841,33 @@ async def remove_admin(user_id): return await asyncio.to_thread(remove_admin_syn
 async def log_admin_action(admin_id, action, details=None): return await asyncio.to_thread(log_admin_action_sync, admin_id, action, details)
 async def get_statistics(): return await asyncio.to_thread(get_statistics_sync)
 async def get_stats(): return await asyncio.to_thread(get_stats_sync)
-async def update_stats_cache(): return await asyncio.to_thread(update_stats_cache_sync)  # ✅ Обратная совместимость
+async def update_stats_cache(): return await asyncio.to_thread(update_stats_cache_sync)
 async def get_goal_progress(): return await asyncio.to_thread(get_goal_progress_sync)
 async def update_goal(goal_name=None, goal_amount=None): return await asyncio.to_thread(update_goal_sync, goal_name, goal_amount)
 
 
-# ============ ЯВНЫЙ ЭКСПОРТ ============
+# ============ ЭКСПОРТ ============
 __all__ = [
-    'init_db', 'init_database',
+    'init_db', 'init_database', 'get_db_connection', 'get_db_cursor',
     'register_user', 'register_user_sync', 'get_user', 'get_user_sync',
     'get_all_gifts', 'get_all_gifts_sync', 'get_gift_by_id', 'get_gift_by_id_sync',
     'add_gift', 'add_gift_sync', 'update_gift', 'update_gift_sync',
     'create_order', 'create_order_sync', 'get_pending_orders', 'get_pending_orders_sync',
-    'get_order_by_id', 'get_order_by_id_sync', 'confirm_order', 'confirm_order_sync', 'cancel_order', 'cancel_order_sync',
+    'get_all_orders', 'get_all_orders_sync', 'get_order_by_id', 'get_order_by_id_sync',
+    'confirm_order', 'confirm_order_sync', 'reject_order', 'reject_order_sync',
+    'cancel_order', 'cancel_order_sync',
     'add_transaction', 'add_transaction_sync', 'update_transaction_status', 'update_transaction_status_sync',
     'get_pending_transactions', 'get_pending_transactions_sync', 'get_all_transactions', 'get_all_transactions_sync',
-    'get_top_heroes', 'get_top_heroes_sync', 'update_top_heroes', 'update_top_heroes_sync',
+    'update_top_heroes', 'update_top_heroes_sync', 'get_top_heroes', 'get_top_heroes_sync',
     'add_gallery_photo', 'add_gallery_photo_sync', 'get_gallery_photos', 'get_gallery_photos_sync',
     'delete_gallery_photo', 'delete_gallery_photo_sync',
     'is_admin', 'is_admin_sync', 'is_super_admin', 'is_super_admin_sync',
     'add_admin', 'add_admin_sync', 'remove_admin', 'remove_admin_sync',
     'log_admin_action', 'log_admin_action_sync',
     'get_statistics', 'get_statistics_sync', 'get_stats', 'get_stats_sync',
-    'get_goal_progress', 'get_goal_progress_sync', 'update_goal', 'update_goal_sync',
-    'update_stats_cache', 'update_stats_cache_sync'
+    'update_stats_cache', 'update_stats_cache_sync',
+    'get_goal_progress', 'get_goal_progress_sync', 'update_goal', 'update_goal_sync'
 ]
 
+# ============ ИНИЦИАЛИЗАЦИЯ ============
+init_database()
