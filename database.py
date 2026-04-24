@@ -3,9 +3,13 @@ import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from config import DB_PATH, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, DEFAULT_GOAL_NAME, DEFAULT_GOAL_AMOUNT
+from config import DB_PATH, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID
 
 logger = logging.getLogger(__name__)
+
+# Значения по умолчанию для цели
+DEFAULT_GOAL_NAME = "На мечту"
+DEFAULT_GOAL_AMOUNT = 150000
 
 # ============ ПОДКЛЮЧЕНИЕ К БД ============
 
@@ -131,6 +135,16 @@ def init_database():
         )
     """)
     
+    # Таблица настроек
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            goal_name TEXT NOT NULL,
+            goal_amount INTEGER NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     # Индексы
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
@@ -143,14 +157,28 @@ def init_database():
     # Добавляем начальные подарки
     init_default_gifts()
     
-    # Создаём таблицу настроек
-    init_settings_table()
+    # Инициализируем настройки
+    init_settings()
     
     conn.close()
     logger.info("✅ База данных инициализирована")
 
 # Алиас для совместимости с main.py
 init_db = init_database
+
+def init_settings():
+    """Инициализация таблицы настроек с дефолтными значениями"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM settings WHERE id = 1")
+    count = cursor.fetchone()[0]
+    if count == 0:
+        cursor.execute("""
+            INSERT INTO settings (id, goal_name, goal_amount)
+            VALUES (1, ?, ?)
+        """, (DEFAULT_GOAL_NAME, DEFAULT_GOAL_AMOUNT))
+        conn.commit()
+    conn.close()
 
 def init_default_gifts():
     """Добавление подарков, если таблица пуста"""
@@ -188,29 +216,6 @@ def init_default_gifts():
         conn.commit()
         logger.info(f"✅ Добавлено {len(default_gifts)} подарков в базу")
     
-    conn.close()
-
-def init_settings_table():
-    """Создание таблицы настроек (если её нет)"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY DEFAULT 1,
-            goal_name TEXT NOT NULL,
-            goal_amount INTEGER NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    # Проверяем, есть ли запись. Если нет — создаём с дефолтными значениями
-    cursor.execute("SELECT COUNT(*) FROM settings WHERE id = 1")
-    count = cursor.fetchone()[0]
-    if count == 0:
-        cursor.execute("""
-            INSERT INTO settings (id, goal_name, goal_amount)
-            VALUES (1, ?, ?)
-        """, (DEFAULT_GOAL_NAME, DEFAULT_GOAL_AMOUNT))
-    conn.commit()
     conn.close()
 
 # ============ ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ============
@@ -406,6 +411,15 @@ def get_all_orders(limit: int = 100) -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
+def get_pending_orders_count() -> int:
+    """Получить количество ожидающих заказов"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM orders WHERE status = 'pending'")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
 # ============ ФУНКЦИИ ДЛЯ ТРАНЗАКЦИЙ ============
 
 def add_transaction(user_id: int, gift_id: int, amount: int, gift_name: str = None, payment_method: str = None) -> int:
@@ -438,6 +452,13 @@ def update_transaction_status(transaction_id: int, status: str, confirmed_by: in
     conn.commit()
     updated = cursor.rowcount > 0
     conn.close()
+    
+    # Если транзакция подтверждена, обновляем топ героев
+    if updated and status == 'paid':
+        transaction = get_transaction_by_id(transaction_id)
+        if transaction:
+            update_top_heroes(transaction['user_id'], transaction['amount'], transaction.get('username'))
+    
     return updated
 
 def get_pending_transactions(limit: int = 50) -> List[Dict]:
@@ -652,6 +673,10 @@ def get_statistics() -> Dict:
         "total_pending": total_pending
     }
 
+def get_stats() -> Dict:
+    """Алиас для get_statistics (для совместимости)"""
+    return get_statistics()
+
 def update_stats_cache():
     """Обновить кэш статистики (для совместимости с main.py)"""
     return get_statistics()
@@ -693,19 +718,25 @@ def get_goal_progress() -> dict:
     """Получить прогресс цели (процент, собранная сумма, бары)"""
     goal = get_goal()
     collected = get_collected_amount()
+    
     if goal['amount'] > 0:
         percent = int(collected / goal['amount'] * 100)
+        if percent > 100:
+            percent = 100
     else:
         percent = 0
+    
+    # Бары для отображения (20 символов)
     bars_count = percent // 5
     bars = "█" * bars_count + "░" * (20 - bars_count)
+    
     return {
         "name": goal['name'],
         "target": goal['amount'],
         "collected": collected,
         "percent": percent,
         "bars": bars,
-        "remaining": goal['amount'] - collected
+        "remaining": goal['amount'] - collected if collected < goal['amount'] else 0
     }
 
 # ============ ФУНКЦИИ ДЛЯ ЛОГОВ ============
