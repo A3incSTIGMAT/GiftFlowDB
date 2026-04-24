@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import get_all_gifts, create_order, get_gift_by_id
-from config import OZON_CARD_LAST, OZON_BANK_NAME, OZON_RECEIVER, SUPPORT_ADMIN_ID
+from config import OZON_BANK_NAME, SUPPORT_ADMIN_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -40,22 +40,26 @@ def get_gifts_keyboard(gifts):
 
 async def show_gifts_catalog(message: types.Message):
     """Показать каталог подарков"""
-    gifts = await get_all_gifts(active_only=True)
-    
-    if not gifts:
+    try:
+        gifts = await get_all_gifts(active_only=True)
+        
+        if not gifts:
+            await message.answer(
+                "🎁 <b>Каталог подарков пока пуст</b>\n\nЗагляни позже!",
+                parse_mode="HTML"
+            )
+            return
+        
+        text = "🎁 <b>Выбери подарок для Ланы:</b>"
+        
         await message.answer(
-            "🎁 <b>Каталог подарков пока пуст</b>\n\nЗагляни позже!",
-            parse_mode="HTML"
+            text,
+            parse_mode="HTML",
+            reply_markup=get_gifts_keyboard(gifts)
         )
-        return
-    
-    text = "🎁 <b>Выбери подарок для Ланы:</b>"
-    
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_gifts_keyboard(gifts)
-    )
+    except Exception as e:
+        logger.error(f"Ошибка show_gifts_catalog: {e}")
+        await message.answer("⚠️ Ошибка загрузки каталога. Попробуйте позже.")
 
 # ============ ОБРАБОТКА ВЫБОРА ПОДАРКА ============
 
@@ -176,7 +180,6 @@ async def receive_receipt(message: types.Message, state: FSMContext):
         reply_markup=keyboard
     )
     
-    # Подтверждение пользователю
     await message.answer(
         "✅ <b>Чек получен!</b>\n\n"
         "❤️ Спасибо, что поддерживаешь меня!\n"
@@ -213,7 +216,6 @@ async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.delete()
     
-    # Создаём объект сообщения для start_command
     class FakeMessage:
         def __init__(self, from_user, chat, bot):
             self.from_user = from_user
