@@ -806,25 +806,34 @@ def get_goal_progress_sync() -> dict:
     }
 
 
-def update_goal_sync(goal_name: str = None, goal_amount: int = None) -> bool:
-    """Обновить настройки цели"""
-    if goal_amount is not None and (not isinstance(goal_amount, int) or goal_amount < 0):
-        raise ValueError("goal_amount должен быть >= 0")
+def set_goal_sync(goal_name: str, goal_amount: int) -> bool:
+    """Установить новую цель"""
+    if not goal_name or not isinstance(goal_amount, int) or goal_amount < 0:
+        raise ValueError("Некорректные данные цели")
     
     try:
         with get_db_cursor() as cursor:
-            updates, params = [], []
-            if goal_name is not None: updates.append("goal_name = ?"); params.append(goal_name)
-            if goal_amount is not None: updates.append("goal_amount = ?"); params.append(goal_amount)
-            
-            if not updates: return False
-            updates.append("updated_at = CURRENT_TIMESTAMP")
-            params.append(1)
-            cursor.execute(f"UPDATE settings SET {', '.join(updates)} WHERE id = ?", params)
+            cursor.execute("""
+                UPDATE settings SET goal_name = ?, goal_amount = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+            """, (goal_name, goal_amount))
             return cursor.rowcount > 0
     except sqlite3.Error as e:
-        logger.error(f"❌ Ошибка обновления цели: {e}")
+        logger.error(f"❌ Ошибка установки цели: {e}")
         return False
+
+
+def update_goal_sync(goal_name: str = None, goal_amount: int = None) -> bool:
+    """Обновить настройки цели (алиас для set_goal_sync)"""
+    if goal_name is None and goal_amount is None:
+        return False
+    if goal_name is None:
+        goal_data = get_goal_progress_sync()
+        goal_name = goal_data['name']
+    if goal_amount is None:
+        goal_data = get_goal_progress_sync()
+        goal_amount = goal_data['target']
+    return set_goal_sync(goal_name, goal_amount)
 
 
 # ============ АСИНХРОННЫЕ ОБЁРТКИ ============
@@ -863,6 +872,7 @@ async def get_statistics(): return await asyncio.to_thread(get_statistics_sync)
 async def get_stats(): return await asyncio.to_thread(get_stats_sync)
 async def update_stats_cache(): return await asyncio.to_thread(update_stats_cache_sync)
 async def get_goal_progress(): return await asyncio.to_thread(get_goal_progress_sync)
+async def set_goal(goal_name, goal_amount): return await asyncio.to_thread(set_goal_sync, goal_name, goal_amount)
 async def update_goal(goal_name=None, goal_amount=None): return await asyncio.to_thread(update_goal_sync, goal_name, goal_amount)
 
 
@@ -887,7 +897,7 @@ __all__ = [
     'log_admin_action', 'log_admin_action_sync',
     'get_statistics', 'get_statistics_sync', 'get_stats', 'get_stats_sync',
     'update_stats_cache', 'update_stats_cache_sync',
-    'get_goal_progress', 'get_goal_progress_sync', 'update_goal', 'update_goal_sync'
+    'get_goal_progress', 'get_goal_progress_sync', 'set_goal', 'set_goal_sync', 'update_goal', 'update_goal_sync'
 ]
 
 # ============ ИНИЦИАЛИЗАЦИЯ ============
