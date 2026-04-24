@@ -40,7 +40,7 @@ def get_gifts_keyboard(gifts):
 
 async def show_gifts_catalog(message: types.Message):
     """Показать каталог подарков"""
-    gifts = get_all_gifts()
+    gifts = await get_all_gifts(active_only=True)
     
     if not gifts:
         await message.answer(
@@ -64,21 +64,21 @@ async def gift_selected(callback: types.CallbackQuery):
     """Обработка выбора подарка"""
     try:
         gift_id = int(callback.data.split("_")[1])
-        gift = get_gift_by_id(gift_id)
+        gift = await get_gift_by_id(gift_id)
         
         if not gift:
             await callback.answer("Подарок не найден!", show_alert=True)
             return
         
         # Создаём заказ
-        order_id = create_order(
+        order_id = await create_order(
             user_id=callback.from_user.id,
             gift_id=gift_id,
             amount=gift['price'],
             username=callback.from_user.username
         )
         
-        # Новая ссылка для оплаты
+        # Ссылка для оплаты с комментарием
         user_id = callback.from_user.id
         payment_link = f"https://finance.ozon.ru/apps/sbp/ozonbankpay/019d71b4-afcd-739d-8e57-8ef0e95d4372?comment={user_id}"
         
@@ -176,7 +176,7 @@ async def receive_receipt(message: types.Message, state: FSMContext):
         reply_markup=keyboard
     )
     
-    # ========== ПОДТВЕРЖДЕНИЕ ПОЛЬЗОВАТЕЛЮ, ЧТО ЧЕК ПОЛУЧЕН ==========
+    # Подтверждение пользователю
     await message.answer(
         "✅ <b>Чек получен!</b>\n\n"
         "❤️ Спасибо, что поддерживаешь меня!\n"
@@ -213,6 +213,7 @@ async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.delete()
     
+    # Создаём объект сообщения для start_command
     class FakeMessage:
         def __init__(self, from_user, chat, bot):
             self.from_user = from_user
