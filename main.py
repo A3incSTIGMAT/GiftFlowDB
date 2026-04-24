@@ -1,10 +1,11 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
 from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import Forbidden
 
 from config import BOT_TOKEN, SUPER_ADMIN_ID, SUPPORT_ADMIN_ID, CHANNEL_ID
 from database import init_db, update_stats_cache, get_top_heroes
@@ -12,7 +13,8 @@ from handlers import routers
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True  # ✅ Перезаписываем хендлеры при повторном импорте
 )
 logger = logging.getLogger(__name__)
 
@@ -60,53 +62,68 @@ async def weekly_top_post():
             medals = ["🥇", "🥈", "🥉"]
             
             for i, hero in enumerate(heroes[:10]):
-                if i < 3:
-                    medal = medals[i]
-                else:
-                    medal = "🎖️"
-                username = hero.get('username') or f"user_{hero['user_id']}"
-                post_text += f"{medal} {username} — {hero['total_amount']:,}₽\n"
+                medal = medals[i] if i < 3 else "🎖️"
+                # ✅ Безопасное получение данных с дефолтами
+                username = hero.get('username') or f"user_{hero.get('user_id', '?')}"
+                amount = hero.get('total_amount', 0) or 0
+                
+                post_text += f"{medal} {username} — {amount:,}₽\n"
             
             post_text += "\n💡 <i>Хочешь попасть в топ? Дари подарки через бота!</i>\n"
-            post_text += f"👉 @{bot.username}"
+            post_text += f"👉 @{(await bot.get_me()).username}"
             
             await bot.send_message(CHANNEL_ID, post_text, parse_mode="HTML")
             logger.info("✅ Пост топа опубликован")
             
+        except Forbidden:
+            logger.error("❌ Бот не имеет прав на отправку в канал")
         except Exception as e:
-            logger.error(f"Ошибка публикации топа: {e}")
+            logger.error(f"❌ Ошибка публикации топа: {type(e).__name__}: {e}")
 
 
 async def on_startup():
     logger.info("🔄 Инициализация базы данных...")
     await init_db()
-    await update_stats_cache()
+    
+    # ✅ Если кэш не используется — можно закомментировать
+    # _ = await update_stats_cache()
+    
     await set_commands()
+    
+    # ✅ Кэшируем info о боте для безопасного использования bot.id
+    bot_info = await bot.get_me()
+    logger.info(f"🤖 Бот: @{bot_info.username} (ID: {bot_info.id})")
     
     if CHANNEL_ID:
         logger.info(f"📢 Канал настроен: {CHANNEL_ID}")
         try:
-            member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=bot.id)
+            member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=bot_info.id)
             if member.status in ("administrator", "creator"):
                 logger.info("✅ Бот имеет права администратора в канале")
             else:
                 logger.warning("⚠️ Бот НЕ является администратором канала!")
+        except Forbidden:
+            logger.error("❌ Бот не добавлен в канал или не имеет прав")
         except Exception as e:
-            logger.warning(f"⚠️ Не удалось проверить права в канале: {e}")
+            logger.warning(f"⚠️ Не удалось проверить права в канале: {type(e).__name__}: {e}")
     else:
         logger.warning("⚠️ CHANNEL_ID не настроен!")
     
     if CHANNEL_ID:
         asyncio.create_task(weekly_top_post())
+        logger.info("📅 Запущена задача еженедельной публикации топа")
     
+    # ✅ Уведомление админа с обработкой Forbidden
     try:
         await bot.send_message(
             SUPER_ADMIN_ID,
             "🤖 <b>Бот запущен!</b>\n\n✅ Все системы работают.\n✅ База данных подключена.\n✅ Обработчики загружены.",
             parse_mode="HTML"
         )
+    except Forbidden:
+        logger.warning("⚠️ Админ не начал диалог с ботом — уведомление не отправлено")
     except Exception as e:
-        logger.warning(f"⚠️ Не удалось уведомить админа: {e}")
+        logger.warning(f"⚠️ Не удалось уведомить админа: {type(e).__name__}: {e}")
     
     logger.info("🚀 Бот запущен! Работаю 24/7!")
     logger.info(f"👑 Супер-админ: {SUPER_ADMIN_ID}")
@@ -117,25 +134,29 @@ async def on_shutdown():
     logger.info("🛑 Бот останавливается...")
     try:
         await bot.send_message(SUPER_ADMIN_ID, "⚠️ <b>Бот остановлен</b>", parse_mode="HTML")
+    except Forbidden:
+        pass  # Админ заблокировал бота или не начал диалог
     except:
         pass
-    await bot.session.close()
+    # ✅ В aiogram 3 сессией управляет Dispatcher — не закрываем вручную
+    # await bot.session.close()  # ← УДАЛЕНО
     logger.info("✅ Бот остановлен")
 
 
 async def main():
     await on_startup()
     try:
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
+        # ✅ allowed_updates можно не указывать — aiogram сам определит
+        await dp.start_polling(bot)
+    except KeyboardInterrupt:
+        logger.info("👋 Получен сигнал остановки (Ctrl+C)")
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.critical(f"❌ Критическая ошибка: {type(e).__name__}: {e}", exc_info=True)
         raise
     finally:
         await on_shutdown()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("👋 Бот остановлен пользователем")
+    asyncio.run(main())
+
