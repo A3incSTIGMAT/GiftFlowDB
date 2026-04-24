@@ -4,8 +4,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-from database import register_user, get_top_heroes, get_goal_progress
-from config import is_admin
+from database import register_user, get_top_heroes, is_admin
+from config import SUPER_ADMIN_ID
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -17,7 +17,7 @@ def get_user_menu_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
-            [KeyboardButton(text="🎁 ПОДДЕРЖКА МАЛОИМУЩЕЙ"), KeyboardButton(text="🏆 Топ героев")],
+            [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
             [KeyboardButton(text="❓ О конкурсе"), KeyboardButton(text="🆘 Помощь")]
         ],
         resize_keyboard=True
@@ -29,7 +29,7 @@ def get_user_menu_keyboard_with_admin():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📺 Twitch"), KeyboardButton(text="📷 Instagram")],
-            [KeyboardButton(text="🎁 ПОДДЕРЖКА МАЛОИМУЩЕЙ"), KeyboardButton(text="🏆 Топ героев")],
+            [KeyboardButton(text="🎁 Каталог подарков"), KeyboardButton(text="🏆 Топ героев")],
             [KeyboardButton(text="❓ О конкурсе"), KeyboardButton(text="🆘 Помощь")],
             [KeyboardButton(text="👑 Админ-панель")]
         ],
@@ -62,7 +62,7 @@ async def start_command(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     
     # Регистрируем пользователя
-    register_user(
+    await register_user(
         user_id=user_id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
@@ -87,33 +87,14 @@ async def start_command(message: types.Message, state: FSMContext):
             "3. Оплати по ссылке\n"
             "4. Отправь скриншот чека сюда\n"
             "5. Я подтвержу подарок\n\n"
-            "📌 <b>Что даёт подарок?</b>\n"
-            "• Имя в Топе героев\n"
-            "• Шанс на секретный приз\n\n"
             "❓ Вопросы? Пиши @lanatwitchh"
         )
         
-        if is_admin(user_id):
+        if await is_admin(user_id):
             await message.answer(help_text, parse_mode="HTML", reply_markup=get_admin_panel_keyboard())
         else:
             await message.answer(help_text, parse_mode="HTML", reply_markup=get_user_menu_keyboard())
         return
-    
-    # Получаем прогресс цели
-    progress = get_goal_progress()
-    
-    # Формируем индикатор цели
-    if progress['target'] > 0:
-        goal_text = f"""
-🎯 <b>ТЕКУЩИЙ СБОР: {progress['name']}</b>
-💰 Собрано: {progress['collected']:,}₽ из {progress['target']:,}₽ ({progress['percent']}%)
-
-{progress['bars']} {progress['percent']}%
-
-💫 До цели: {progress['remaining']:,}₽
-"""
-    else:
-        goal_text = ""
     
     # Обычный /start
     welcome_text = (
@@ -123,19 +104,18 @@ async def start_command(message: types.Message, state: FSMContext):
         "• Подарки от 10₽ до 150 000₽\n"
         "• Топ героев\n"
         "• Секретный приз для победителя\n\n"
+        "👇 Выбери действие в меню:"
     )
     
-    full_text = welcome_text + goal_text + "\n👇 Выбери действие в меню:"
-    
-    if is_admin(user_id):
+    if await is_admin(user_id):
         await message.answer(
-            "👑 <b>Панель администратора</b>\n\n" + full_text,
+            "👑 <b>Панель администратора</b>\n\n" + welcome_text,
             parse_mode="HTML",
             reply_markup=get_user_menu_keyboard_with_admin()
         )
     else:
         await message.answer(
-            full_text,
+            welcome_text,
             parse_mode="HTML",
             reply_markup=get_user_menu_keyboard()
         )
@@ -150,24 +130,9 @@ async def cancel_command(message: types.Message, state: FSMContext):
     
     await message.answer("❌ <b>Действие отменено</b>", parse_mode="HTML")
     
-    # Получаем прогресс цели
-    progress = get_goal_progress()
+    welcome_text = "🐉 <b>Добро пожаловать!</b>\n\n👇 Выбери действие в меню:"
     
-    if progress['target'] > 0:
-        goal_text = f"""
-🎯 <b>ТЕКУЩИЙ СБОР: {progress['name']}</b>
-💰 Собрано: {progress['collected']:,}₽ из {progress['target']:,}₽ ({progress['percent']}%)
-
-{progress['bars']} {progress['percent']}%
-
-💫 До цели: {progress['remaining']:,}₽
-"""
-    else:
-        goal_text = ""
-    
-    welcome_text = "🐉 <b>Добро пожаловать!</b>\n\n👇 Выбери действие в меню:\n\n" + goal_text
-    
-    if is_admin(user_id):
+    if await is_admin(user_id):
         await message.answer(
             "👑 <b>Панель администратора</b>\n\n" + welcome_text,
             parse_mode="HTML",
@@ -212,7 +177,7 @@ async def top_heroes_button(message: types.Message, state: FSMContext):
     """Кнопка Топ героев"""
     await state.clear()
     
-    heroes = get_top_heroes(limit=10)
+    heroes = await get_top_heroes(limit=10)
     
     if not heroes:
         await message.answer("🏆 <b>Топ героев пока пуст</b>\n\nСтань первым!", parse_mode="HTML")
@@ -267,7 +232,7 @@ async def admin_panel_button(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
     
-    if not is_admin(user_id):
+    if not await is_admin(user_id):
         await message.answer("⛔ У вас нет доступа к админ-панели.")
         return
     
@@ -287,24 +252,9 @@ async def back_to_main_menu(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
     
-    # Получаем прогресс цели
-    progress = get_goal_progress()
+    welcome_text = "🐉 <b>Добро пожаловать!</b>\n\n👇 Выбери действие в меню:"
     
-    if progress['target'] > 0:
-        goal_text = f"""
-🎯 <b>ТЕКУЩИЙ СБОР: {progress['name']}</b>
-💰 Собрано: {progress['collected']:,}₽ из {progress['target']:,}₽ ({progress['percent']}%)
-
-{progress['bars']} {progress['percent']}%
-
-💫 До цели: {progress['remaining']:,}₽
-"""
-    else:
-        goal_text = ""
-    
-    welcome_text = "🐉 <b>Добро пожаловать!</b>\n\n👇 Выбери действие в меню:\n\n" + goal_text
-    
-    if is_admin(user_id):
+    if await is_admin(user_id):
         await message.answer(
             "👑 <b>Панель администратора</b>\n\n" + welcome_text,
             parse_mode="HTML",
