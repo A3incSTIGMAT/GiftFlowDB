@@ -432,6 +432,10 @@ def get_order_by_id_sync(order_id: int) -> Optional[Dict]:
         return None
 
 
+# Алиас для совместимости с admin.py
+get_order_sync = get_order_by_id_sync
+
+
 def confirm_order_sync(order_id: int, confirmed_by: int = None) -> bool:
     """Подтвердить заказ"""
     if not isinstance(order_id, int) or order_id <= 0: return False
@@ -822,6 +826,7 @@ async def create_order(user_id, gift_id, amount, username=None): return await as
 async def get_pending_orders(limit=100): return await asyncio.to_thread(get_pending_orders_sync, limit)
 async def get_all_orders(limit=100): return await asyncio.to_thread(get_all_orders_sync, limit)
 async def get_order_by_id(order_id): return await asyncio.to_thread(get_order_by_id_sync, order_id)
+async def get_order(order_id): return await asyncio.to_thread(get_order_by_id_sync, order_id)  # Алиас для admin.py
 async def confirm_order(order_id, confirmed_by=None): return await asyncio.to_thread(confirm_order_sync, order_id, confirmed_by)
 async def reject_order(order_id, confirmed_by=None): return await asyncio.to_thread(reject_order_sync, order_id, confirmed_by)
 async def cancel_order(order_id): return await asyncio.to_thread(cancel_order_sync, order_id)
@@ -854,6 +859,7 @@ __all__ = [
     'add_gift', 'add_gift_sync', 'update_gift', 'update_gift_sync',
     'create_order', 'create_order_sync', 'get_pending_orders', 'get_pending_orders_sync',
     'get_all_orders', 'get_all_orders_sync', 'get_order_by_id', 'get_order_by_id_sync',
+    'get_order', 'get_order_sync',  # Добавлено для совместимости
     'confirm_order', 'confirm_order_sync', 'reject_order', 'reject_order_sync',
     'cancel_order', 'cancel_order_sync',
     'add_transaction', 'add_transaction_sync', 'update_transaction_status', 'update_transaction_status_sync',
